@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>OrbitWatch</title>
+<style>
+  :root { --bg:#0b1020; --card:#131a2e; --ink:#e8ecf5; --mut:#93a0bd;
+          --acc:#f0b429; --ok:#2fbf71; --warn:#e5484d; --line:#273150; }
+  *{box-sizing:border-box} body{margin:0;font:15px/1.5 system-ui,sans-serif;
+    background:var(--bg);color:var(--ink);padding:16px}
+  .wrap{max-width:900px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 2px} .sub{color:var(--mut);margin:0 0 16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:16px;margin-bottom:16px}
+  label{display:block;font-size:13px;color:var(--mut);margin:8px 0 4px}
+  input[type=file]{width:100%;color:var(--ink)}
+  button{background:var(--acc);color:#1a1205;border:0;border-radius:8px;
+    padding:10px 16px;font-weight:700;cursor:pointer}
+  button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-weight:700;font-size:13px}
+  .PENDING_REVIEW{background:rgba(229,72,77,.15);color:var(--warn)}
+  .CLEAR{background:rgba(47,191,113,.15);color:var(--ok)}
+  .NEEDS_HUMAN_REVIEW{background:rgba(240,180,41,.15);color:var(--acc)}
+  .CONFIRMED{background:var(--warn);color:#fff}.DISMISSED{background:#33406a;color:#fff}
+  .step{border-left:2px solid var(--line);padding:6px 0 6px 12px;margin-left:6px}
+  .step b{color:var(--acc)} .mut{color:var(--mut);font-size:13px}
+  img{max-width:100%;border-radius:8px;border:1px solid var(--line);margin-top:8px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  code{background:#0a0f1e;padding:1px 5px;border-radius:4px}
+  @media(max-width:560px){.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>OrbitWatch</h1>
+  <p class="sub">Agentic satellite change detection — OpenCV 5 + AWS. The agent
+     decides the next action from what it sees; a human approves every alert.</p>
+
+  <div class="card">
+    <div class="grid">
+      <div><label>Before image</label><input id="before" type="file" accept="image/*"></div>
+      <div><label>After image</label><input id="after" type="file" accept="image/*"></div>
+    </div>
+    <label>Alternate date (optional — used if the after image is too cloudy)</label>
+    <input id="alt" type="file" accept="image/*">
+    <div class="row" style="margin-top:12px">
+      <button onclick="run()">Inspect</button>
+      <span id="busy" class="mut"></span>
+    </div>
+  </div>
+
+  <div id="result"></div>
+</div>
+
+<script>
+let currentId = null;
+async function run(){
+  const b=document.getElementById('before').files[0];
+  const a=document.getElementById('after').files[0];
+  const alt=document.getElementById('alt').files[0];
+  if(!b||!a){alert('Pick a before and an after image');return;}
+  const fd=new FormData(); fd.append('before',b); fd.append('after',a);
+  if(alt) fd.append('alt_after',alt);
+  document.getElementById('busy').textContent='running the agent loop…';
+  const r=await fetch('/inspect',{method:'POST',body:fd});
+  const j=await r.json();
+  document.getElementById('busy').textContent='';
+  render(j);
+}
+function render(j){
+  currentId=j.id;
+  const steps=j.trace.map(s=>`<div class="step"><b>${s.tool}</b>
+     <span class="mut">${JSON.stringify(s.metric)}</span><br>
+     → ${s.decision}</div>`).join('');
+  const art=j.artifacts||{};
+  const imgs=Object.entries(art).map(([k,v])=>
+     `<div><div class="mut">${k}</div><img src="${v}?t=${Date.now()}"></div>`).join('');
+  const needsApproval = j.status==='PENDING_REVIEW'||j.status==='NEEDS_HUMAN_REVIEW';
+  document.getElementById('result').innerHTML=`
+    <div class="card">
+      <div class="row">
+        <span class="pill ${j.status}">${j.status}</span>
+        <span class="mut">confidence ${j.confidence} · agent: ${j.mode} · id ${j.id}</span>
+      </div>
+      <p class="mut">${j.reason||''}</p>
+      ${needsApproval?`<div class="row">
+        <button onclick="approve('approve')">Approve alert</button>
+        <button class="ghost" onclick="approve('dismiss')">Dismiss</button>
+        <span id="decided" class="mut"></span></div>`:''}
+    </div>
+    <div class="card"><h3 style="margin:0 0 8px">Agent step trace</h3>${steps}</div>
+    <div class="card"><h3 style="margin:0 0 8px">What the eyes saw</h3>
+      <div class="grid">${imgs}</div></div>`;
+}
+async function approve(decision){
+  const fd=new FormData(); fd.append('decision',decision);
+  const r=await fetch('/approve/'+currentId,{method:'POST',body:fd});
+  const j=await r.json();
+  document.getElementById('decided').innerHTML=
+    `<span class="pill ${j.status}">${j.status}</span> saved`;
+}
+</script>
+</body>
+</html>

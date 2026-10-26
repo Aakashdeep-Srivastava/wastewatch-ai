@@ -1,0 +1,8 @@
+# Pin exact versions AFTER the smoke test with:  pip freeze > requirements.lock
+opencv-python-headless==5.0.0.93
+numpy>=1.26,<3
+fastapi>=0.115
+uvicorn[standard]>=0.30
+python-multipart>=0.0.9
+boto3>=1.34          # only needed for the Bedrock/DynamoDB paths
+pytest>=8.0          # dev only
