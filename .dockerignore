@@ -1,0 +1,13 @@
+.git
+.gitignore
+.venv
+__pycache__
+*.pyc
+out/
+data/
+eval_report.json
+tests/
+eval.py
+deploy/
+README.md
+.DS_Store
