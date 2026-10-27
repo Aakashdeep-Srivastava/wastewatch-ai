@@ -7,110 +7,362 @@
 <link rel="icon" type="image/png" href="/static/logo.png"/>
 <link rel="apple-touch-icon" href="/static/logo.png"/>
 <meta name="theme-color" content="#0b1020"/>
+<link href="https://cdn.jsdelivr.net/npm/maplibre-gl@5/dist/maplibre-gl.css" rel="stylesheet"/>
 <style>
   :root { --bg:#0b1020; --card:#131a2e; --ink:#e8ecf5; --mut:#93a0bd;
           --acc:#f0b429; --ok:#2fbf71; --warn:#e5484d; --line:#273150; }
-  *{box-sizing:border-box} body{margin:0;font:15px/1.5 system-ui,sans-serif;
-    background:var(--bg);color:var(--ink);padding:16px}
-  .wrap{max-width:900px;margin:0 auto}
-  h1{font-size:22px;margin:0 0 2px} .sub{color:var(--mut);margin:0 0 16px}
-  .brand{display:flex;align-items:center;gap:12px;margin:0 0 2px}
-  .brand img{width:52px;height:52px;border-radius:12px;border:1px solid var(--line);
-    margin-top:0;flex:0 0 auto}
-  .brand h1{margin:0}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
-    padding:16px;margin-bottom:16px}
-  label{display:block;font-size:13px;color:var(--mut);margin:8px 0 4px}
-  input[type=file]{width:100%;color:var(--ink)}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font:15px/1.5 system-ui,-apple-system,sans-serif;
+    background:var(--bg);color:var(--ink);overflow:hidden}
+  #map{position:absolute;inset:0}
+
+  .panel{position:absolute;top:16px;left:16px;z-index:10;width:340px;max-width:calc(100vw - 32px);
+    max-height:calc(100vh - 32px);overflow:auto;background:rgba(19,26,46,.94);
+    border:1px solid var(--line);border-radius:14px;padding:16px;
+    backdrop-filter:blur(8px);box-shadow:0 10px 30px rgba(0,0,0,.45)}
+  .brand{display:flex;align-items:center;gap:12px;margin-bottom:4px}
+  .brand img{width:46px;height:46px;border-radius:11px;border:1px solid var(--line);flex:0 0 auto}
+  .brand h1{font-size:19px;margin:0}
+  .sub{color:var(--mut);margin:0 0 14px;font-size:13px}
+
+  .sec{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}
+  .sec h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--mut);margin:0 0 8px}
+  label{display:block;font-size:12px;color:var(--mut);margin:8px 0 4px}
+  input[type=file],input[type=text]{width:100%;color:var(--ink);background:#0a0f1e;
+    border:1px solid var(--line);border-radius:8px;padding:7px}
+  input[type=file]{padding:6px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
   button{background:var(--acc);color:#1a1205;border:0;border-radius:8px;
-    padding:10px 16px;font-weight:700;cursor:pointer}
+    padding:9px 14px;font-weight:700;cursor:pointer;font-size:13px}
   button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
-  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-weight:700;font-size:13px}
-  .PENDING_REVIEW{background:rgba(229,72,77,.15);color:var(--warn)}
-  .CLEAR{background:rgba(47,191,113,.15);color:var(--ok)}
-  .NEEDS_HUMAN_REVIEW{background:rgba(240,180,41,.15);color:var(--acc)}
+  button.ghost.on{border-color:var(--acc);color:var(--acc)}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+  .bbox{background:#0a0f1e;border:1px solid var(--line);border-radius:8px;
+    padding:8px;color:var(--mut);word-break:break-all}
+  .pill{display:inline-block;padding:3px 10px;border-radius:999px;font-weight:700;font-size:12px}
+  .PENDING_REVIEW,.NEEDS_REVIEW{background:rgba(229,72,77,.15);color:var(--warn)}
+  .NO_SIGNIFICANT_CHANGE{background:rgba(47,191,113,.15);color:var(--ok)}
   .CONFIRMED{background:var(--warn);color:#fff}.DISMISSED{background:#33406a;color:#fff}
-  .step{border-left:2px solid var(--line);padding:6px 0 6px 12px;margin-left:6px}
-  .step b{color:var(--acc)} .mut{color:var(--mut);font-size:13px}
-  img{max-width:100%;border-radius:8px;border:1px solid var(--line);margin-top:8px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-  code{background:#0a0f1e;padding:1px 5px;border-radius:4px}
-  @media(max-width:560px){.grid{grid-template-columns:1fr}}
+  .det{border:1px solid var(--line);border-radius:8px;padding:8px;margin:6px 0;cursor:pointer}
+  .det:hover{border-color:var(--acc)}
+  .det b{color:var(--acc)}
+  .meter{height:6px;border-radius:999px;background:#0a0f1e;overflow:hidden;margin-top:4px}
+  .meter>i{display:block;height:100%;background:var(--acc)}
+  .note{font-size:11px;color:var(--mut);line-height:1.4;margin-top:6px}
+  .foot{font-size:10px;color:var(--mut);margin-top:12px;line-height:1.4}
+  a{color:var(--acc)}
+  .msg{font-size:12px;margin-top:8px}
+  .msg.err{color:var(--warn)} .msg.ok{color:var(--ok)}
 </style>
 </head>
 <body>
-<div class="wrap">
+<div id="map"></div>
+
+<div class="panel">
   <div class="brand">
     <img src="/static/logo.png" alt="WasteWatch AI logo"/>
     <h1>WasteWatch AI</h1>
   </div>
-  <p class="sub">Agentic satellite change detection — OpenCV 5 + AWS. The agent
-     decides the next action from what it sees; a human approves every alert.</p>
+  <p class="sub">Satellite environmental intelligence. Navigate the globe, pick an
+     area, and map pixel-level change onto the Earth — a human approves every alert.</p>
 
-  <div class="card">
-    <div class="grid">
-      <div><label>Before image</label><input id="before" type="file" accept="image/*"></div>
-      <div><label>After image</label><input id="after" type="file" accept="image/*"></div>
-    </div>
-    <label>Alternate date (optional — used if the after image is too cloudy)</label>
-    <input id="alt" type="file" accept="image/*">
-    <div class="row" style="margin-top:12px">
-      <button onclick="run()">Inspect</button>
-      <span id="busy" class="mut"></span>
-    </div>
+  <div class="row">
+    <button id="flyGoa">Fly to Goa</button>
+    <button class="ghost" id="viewEarth">View Earth</button>
   </div>
 
-  <div id="result"></div>
+  <div class="sec">
+    <h2>Area of interest</h2>
+    <div class="row">
+      <button class="ghost" id="drawBtn">Draw AOI</button>
+      <button class="ghost" id="useView">Use current view</button>
+      <button class="ghost" id="clearAoi">Clear</button>
+    </div>
+    <label>Bounding box <span class="mono">[W, S, E, N]</span></label>
+    <div class="bbox mono" id="bboxOut">none — draw a rectangle or use the current view</div>
+    <div class="note">Basemap tiles (NASA / EOX) are fixed historical composites —
+      context and navigation only, <b>not</b> a source for temporal change
+      detection. Supply real before/after Sentinel-2 imagery below for analysis.</div>
+  </div>
+
+  <div class="sec">
+    <h2>Inspect a before / after pair</h2>
+    <div class="grid2">
+      <div><label>Before</label><input id="before" type="file" accept="image/*"></div>
+      <div><label>After</label><input id="after" type="file" accept="image/*"></div>
+    </div>
+    <label>Alternate after date (optional)</label>
+    <input id="altAfter" type="file" accept="image/*">
+    <div class="row" style="margin-top:10px">
+      <button id="runBtn">Run inspection</button>
+      <button class="ghost" id="overlayBtn" disabled>Show on map</button>
+    </div>
+    <div class="msg" id="msg"></div>
+  </div>
+
+  <div class="sec" id="resultSec" style="display:none">
+    <h2>Result</h2>
+    <div class="row" style="justify-content:space-between">
+      <span class="pill" id="statusPill">—</span>
+      <span class="mono" id="scoreOut"></span>
+    </div>
+    <div id="display" class="note"></div>
+    <div id="dets"></div>
+  </div>
+
+  <div class="sec" id="reviewSec" style="display:none">
+    <h2>Human review</h2>
+    <label>Reviewer token</label>
+    <input id="token" type="text" placeholder="reviewer token" value="dev-reviewer-token">
+    <div class="row" style="margin-top:8px">
+      <button id="approveBtn">Approve</button>
+      <button class="ghost" id="dismissBtn">Dismiss</button>
+    </div>
+    <div class="msg" id="reviewMsg"></div>
+  </div>
+
+  <div class="foot">
+    Imagery: © <a href="https://s2maps.eu" target="_blank" rel="noopener">Sentinel-2 cloudless</a>
+    by EOX IT Services (CC BY 4.0), modified Copernicus Sentinel data ·
+    NASA EOSDIS GIBS · Map © <a href="https://maplibre.org" target="_blank" rel="noopener">MapLibre</a>
+  </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/maplibre-gl@5/dist/maplibre-gl.js"></script>
 <script>
-let currentId = null;
-async function run(){
-  const b=document.getElementById('before').files[0];
-  const a=document.getElementById('after').files[0];
-  const alt=document.getElementById('alt').files[0];
-  if(!b||!a){alert('Pick a before and an after image');return;}
-  const fd=new FormData(); fd.append('before',b); fd.append('after',a);
-  if(alt) fd.append('alt_after',alt);
-  document.getElementById('busy').textContent='running the agent loop…';
-  const r=await fetch('/inspect',{method:'POST',body:fd});
-  const j=await r.json();
-  document.getElementById('busy').textContent='';
-  render(j);
+"use strict";
+
+const SENTINEL = "https://tiles.maps.eox.at/wmts/1.0.0/s2cloudless_3857/default/GoogleMapsCompatible/{z}/{y}/{x}.jpg";
+const EARTH = "https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/BlueMarble_NextGeneration/default/2004-01-01/GoogleMapsCompatible_Level8/{z}/{y}/{x}.jpeg";
+
+const map = new maplibregl.Map({
+  container: "map",
+  center: [72, 18],
+  zoom: 1.4,
+  minZoom: 0,
+  maxZoom: 14,
+  preserveDrawingBuffer: true,   // allows capturing the canvas for agents
+  attributionControl: { compact: true },
+  style: {
+    version: 8,
+    sources: {
+      sentinel: { type: "raster", tiles: [SENTINEL], tileSize: 256, maxzoom: 14,
+        attribution: "Sentinel-2 cloudless 2016 © EOX (CC BY 4.0), modified Copernicus Sentinel data" },
+      earth: { type: "raster", tiles: [EARTH], tileSize: 256, maxzoom: 8,
+        attribution: "NASA EOSDIS GIBS" }
+    },
+    layers: [
+      { id: "sentinel", type: "raster", source: "sentinel" },
+      { id: "earth", type: "raster", source: "earth",
+        paint: { "raster-opacity": ["interpolate", ["linear"], ["zoom"], 1, 1, 3, 0.6, 5, 0] } }
+    ]
+  }
+});
+
+map.addControl(new maplibregl.NavigationControl(), "top-right");
+map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right");
+
+// ---- state ----
+let aoi = null;            // [west, south, east, north]
+let lastResult = null;
+let drawing = false, dragging = false, startLngLat = null;
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => Number(n).toFixed(4);
+
+function emptyFC() { return { type: "FeatureCollection", features: [] }; }
+
+map.on("load", () => {
+  try { map.setProjection({ type: "globe" }); } catch (e) { /* older maplibre: stays flat */ }
+
+  map.addSource("aoi", { type: "geojson", data: emptyFC() });
+  map.addLayer({ id: "aoi-fill", type: "fill", source: "aoi",
+    paint: { "fill-color": "#f0b429", "fill-opacity": 0.08 } });
+  map.addLayer({ id: "aoi-line", type: "line", source: "aoi",
+    paint: { "line-color": "#f0b429", "line-width": 2, "line-dasharray": [2, 1] } });
+
+  map.addSource("detections", { type: "geojson", data: emptyFC() });
+  map.addLayer({ id: "det-fill", type: "fill", source: "detections",
+    paint: { "fill-color": ["interpolate", ["linear"], ["get", "ds"],
+             0, "#2fbf71", 0.55, "#f0b429", 0.75, "#e5484d"], "fill-opacity": 0.25 } });
+  map.addLayer({ id: "det-line", type: "line", source: "detections",
+    paint: { "line-color": ["interpolate", ["linear"], ["get", "ds"],
+             0, "#2fbf71", 0.55, "#f0b429", 0.75, "#e5484d"], "line-width": 2 } });
+
+  map.on("click", "det-fill", (e) => {
+    const p = e.features[0].properties;
+    new maplibregl.Popup().setLngLat(e.lngLat)
+      .setHTML(`<b>Detection</b><br>area ≈ ${p.area}px²<br>disturbed-surface ${p.ds}`)
+      .addTo(map);
+  });
+  map.on("mouseenter", "det-fill", () => map.getCanvas().style.cursor = "pointer");
+  map.on("mouseleave", "det-fill", () => map.getCanvas().style.cursor = "");
+});
+
+// ---- AOI drawing (drag a rectangle) ----
+function bboxPolygon(b) {
+  const [w, s, e, n] = b;
+  return { type: "FeatureCollection", features: [{ type: "Feature", properties: {},
+    geometry: { type: "Polygon", coordinates: [[[w, s], [e, s], [e, n], [w, n], [w, s]]] } }] };
 }
-function render(j){
-  currentId=j.id;
-  const steps=j.trace.map(s=>`<div class="step"><b>${s.tool}</b>
-     <span class="mut">${JSON.stringify(s.metric)}</span><br>
-     → ${s.decision}</div>`).join('');
-  const art=j.artifacts||{};
-  const imgs=Object.entries(art).map(([k,v])=>
-     `<div><div class="mut">${k}</div><img src="${v}?t=${Date.now()}"></div>`).join('');
-  const needsApproval = j.status==='PENDING_REVIEW'||j.status==='NEEDS_HUMAN_REVIEW';
-  document.getElementById('result').innerHTML=`
-    <div class="card">
-      <div class="row">
-        <span class="pill ${j.status}">${j.status}</span>
-        <span class="mut">confidence ${j.confidence} · agent: ${j.mode} · id ${j.id}</span>
-      </div>
-      <p class="mut">${j.reason||''}</p>
-      ${needsApproval?`<div class="row">
-        <button onclick="approve('approve')">Approve alert</button>
-        <button class="ghost" onclick="approve('dismiss')">Dismiss</button>
-        <span id="decided" class="mut"></span></div>`:''}
-    </div>
-    <div class="card"><h3 style="margin:0 0 8px">Agent step trace</h3>${steps}</div>
-    <div class="card"><h3 style="margin:0 0 8px">What the eyes saw</h3>
-      <div class="grid">${imgs}</div></div>`;
+function setAOI(b) {
+  if (!b) return clearAOI();
+  aoi = [Math.min(b[0], b[2]), Math.min(b[1], b[3]), Math.max(b[0], b[2]), Math.max(b[1], b[3])];
+  map.getSource("aoi").setData(bboxPolygon(aoi));
+  $("bboxOut").textContent = `[${aoi.map(fmt).join(", ")}]`;
+  return aoi;
 }
-async function approve(decision){
-  const fd=new FormData(); fd.append('decision',decision);
-  const r=await fetch('/approve/'+currentId,{method:'POST',body:fd});
-  const j=await r.json();
-  document.getElementById('decided').innerHTML=
-    `<span class="pill ${j.status}">${j.status}</span> saved`;
+function clearAOI() {
+  aoi = null;
+  if (map.getSource("aoi")) map.getSource("aoi").setData(emptyFC());
+  $("bboxOut").textContent = "none — draw a rectangle or use the current view";
 }
+
+$("drawBtn").onclick = () => {
+  drawing = !drawing;
+  $("drawBtn").classList.toggle("on", drawing);
+  $("drawBtn").textContent = drawing ? "Click-drag on map…" : "Draw AOI";
+  map.getCanvas().style.cursor = drawing ? "crosshair" : "";
+};
+$("useView").onclick = () => {
+  const b = map.getBounds();
+  setAOI([b.getWest(), b.getSouth(), b.getEast(), b.getNorth()]);
+};
+$("clearAoi").onclick = clearAOI;
+
+map.on("mousedown", (e) => {
+  if (!drawing) return;
+  dragging = true; startLngLat = e.lngLat; map.dragPan.disable();
+});
+map.on("mousemove", (e) => {
+  if (!drawing || !dragging) return;
+  map.getSource("aoi").setData(bboxPolygon(
+    [startLngLat.lng, startLngLat.lat, e.lngLat.lng, e.lngLat.lat]));
+});
+map.on("mouseup", (e) => {
+  if (!drawing || !dragging) return;
+  dragging = false; map.dragPan.enable();
+  setAOI([startLngLat.lng, startLngLat.lat, e.lngLat.lng, e.lngLat.lat]);
+  drawing = false; $("drawBtn").classList.remove("on");
+  $("drawBtn").textContent = "Draw AOI"; map.getCanvas().style.cursor = "";
+});
+
+// ---- fly-to presets ----
+$("flyGoa").onclick = () => map.flyTo({ center: [73.95, 15.5], zoom: 10, speed: 0.7, essential: true });
+$("viewEarth").onclick = () => map.flyTo({ center: [70, 18], zoom: 1.4, speed: 0.7, essential: true });
+
+// ---- pixel -> geo (assumes the pair covers the AOI, north-up, no rotation) ----
+function blobToFeature(blob, box, size) {
+  const [w, s, e, n] = box, W = size.w, H = size.h;
+  const x1 = w + (blob.x / W) * (e - w);
+  const x2 = w + ((blob.x + blob.w) / W) * (e - w);
+  const yTop = n - (blob.y / H) * (n - s);
+  const yBot = n - ((blob.y + blob.h) / H) * (n - s);
+  return { type: "Feature",
+    properties: { ds: blob.disturbed_surface ?? 0, area: blob.area ?? 0 },
+    geometry: { type: "Polygon", coordinates: [[[x1, yTop], [x2, yTop], [x2, yBot], [x1, yBot], [x1, yTop]]] } };
+}
+function overlayDetections(result, box) {
+  if (!map.getSource("detections")) return;
+  if (!result || !box || !result.image_size || !(result.blobs || []).length) {
+    map.getSource("detections").setData(emptyFC());
+    return false;
+  }
+  const feats = result.blobs.map((b) => blobToFeature(b, box, result.image_size));
+  map.getSource("detections").setData({ type: "FeatureCollection", features: feats });
+  map.fitBounds([[box[0], box[1]], [box[2], box[3]]], { padding: 60, maxZoom: 13, duration: 900 });
+  return true;
+}
+
+// ---- inspection ----
+function renderResult(r) {
+  lastResult = r;
+  $("resultSec").style.display = "block";
+  $("statusPill").textContent = (r.status || "").replace(/_/g, " ");
+  $("statusPill").className = "pill " + r.status;
+  $("scoreOut").textContent = "score " + Number(r.change_score || 0).toFixed(3);
+  $("display").textContent = r.display || "";
+  const dets = $("dets"); dets.innerHTML = "";
+  (r.blobs || []).forEach((b, i) => {
+    const d = document.createElement("div");
+    d.className = "det";
+    d.innerHTML = `<b>#${i + 1}</b> area ≈ ${b.area}px² · disturbed-surface ${b.disturbed_surface}
+      <div class="meter"><i style="width:${Math.round((b.disturbed_surface || 0) * 100)}%"></i></div>`;
+    d.onclick = () => {
+      if (aoi && r.image_size) {
+        const f = blobToFeature(b, aoi, r.image_size);
+        const c = f.geometry.coordinates[0][0];
+        map.flyTo({ center: [(aoi[0] + aoi[2]) / 2, (aoi[1] + aoi[3]) / 2], zoom: 11, essential: true });
+      }
+    };
+    dets.appendChild(d);
+  });
+  $("overlayBtn").disabled = !(aoi && r.image_size && (r.blobs || []).length);
+  const reviewable = r.status === "PENDING_REVIEW" || r.status === "NEEDS_REVIEW";
+  $("reviewSec").style.display = reviewable ? "block" : "none";
+  if (aoi) overlayDetections(r, aoi);
+}
+
+async function runInspection() {
+  const bf = $("before").files[0], af = $("after").files[0], alt = $("altAfter").files[0];
+  const msg = $("msg");
+  if (!bf || !af) { msg.className = "msg err"; msg.textContent = "Select both a before and an after image."; return; }
+  msg.className = "msg"; msg.textContent = "Running inspection…";
+  const fd = new FormData();
+  fd.append("before", bf); fd.append("after", af);
+  if (alt) fd.append("alt_after", alt);
+  if (aoi) fd.append("aoi", JSON.stringify(aoi));
+  try {
+    const resp = await fetch("/inspect", { method: "POST", body: fd });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "inspection failed");
+    msg.className = "msg ok"; msg.textContent = "Inspection complete.";
+    renderResult(data);
+    return data;
+  } catch (err) {
+    msg.className = "msg err"; msg.textContent = "Error: " + err.message;
+    throw err;
+  }
+}
+$("runBtn").onclick = runInspection;
+$("overlayBtn").onclick = () => overlayDetections(lastResult, aoi);
+
+// ---- human review ----
+async function review(decision) {
+  const rm = $("reviewMsg");
+  if (!lastResult) { rm.className = "msg err"; rm.textContent = "No active result."; return; }
+  const fd = new FormData(); fd.append("decision", decision);
+  try {
+    const resp = await fetch("/approve/" + lastResult.id, { method: "POST", body: fd,
+      headers: { "x-reviewer-token": $("token").value } });
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.detail || "review failed");
+    rm.className = "msg ok"; rm.textContent = "Status: " + data.status;
+    $("statusPill").textContent = data.status; $("statusPill").className = "pill " + data.status;
+  } catch (err) { rm.className = "msg err"; rm.textContent = "Error: " + err.message; }
+}
+$("approveBtn").onclick = () => review("approve");
+$("dismissBtn").onclick = () => review("dismiss");
+
+// ---- scriptable surface for agents (browser automation / console) ----
+window.WasteWatch = {
+  map,
+  flyTo: (lng, lat, zoom = 10) => map.flyTo({ center: [lng, lat], zoom, essential: true }),
+  viewEarth: () => map.flyTo({ center: [70, 18], zoom: 1.4, essential: true }),
+  getView: () => {
+    const b = map.getBounds(), c = map.getCenter();
+    return { center: [c.lng, c.lat], zoom: map.getZoom(),
+             bounds: [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()] };
+  },
+  setAOI, getAOI: () => aoi, clearAOI,
+  captureImage: () => map.getCanvas().toDataURL("image/png"),  // basemap snapshot (context only)
+  runInspection,
+  getLastResult: () => lastResult,
+  overlayDetections: () => overlayDetections(lastResult, aoi)
+};
 </script>
 </body>
 </html>
