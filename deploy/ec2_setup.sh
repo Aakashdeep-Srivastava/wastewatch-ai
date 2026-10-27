@@ -7,8 +7,8 @@ set -euo pipefail
 sudo apt-get update -y
 sudo apt-get install -y python3-venv python3-pip git libgl1 libglib2.0-0
 
-# clone your repo (replace with your GitHub URL)
-REPO="${1:-https://github.com/YOURUSER/orbitwatch.git}"
+# clone your repo (override by passing a URL as the first argument)
+REPO="${1:-https://github.com/Aakashdeep-Srivastava/wastewatch-ai.git}"
 git clone "$REPO" app_src || (cd app_src && git pull)
 cd app_src
 
@@ -19,9 +19,9 @@ pip freeze > requirements.lock
 python -m pytest -q || true   # smoke test; don't block deploy
 
 # run as a background service
-cat <<'UNIT' | sudo tee /etc/systemd/system/orbitwatch.service
+cat <<'UNIT' | sudo tee /etc/systemd/system/wastewatch.service
 [Unit]
-Description=OrbitWatch
+Description=WasteWatch AI
 After=network.target
 [Service]
 WorkingDirectory=/home/ubuntu/app_src
@@ -34,5 +34,5 @@ WantedBy=multi-user.target
 UNIT
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now orbitwatch
-echo "OrbitWatch is live on http://<ELASTIC_IP>:8000"
+sudo systemctl enable --now wastewatch
+echo "WasteWatch AI is live on http://<ELASTIC_IP>:8000"

@@ -1,1 +1,1 @@
-# OrbitWatch application package
+# WasteWatch AI application package
