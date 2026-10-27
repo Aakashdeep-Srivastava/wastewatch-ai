@@ -21,8 +21,7 @@ import threading
 import cv2 as cv
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
-from fastapi.responses import (HTMLResponse, JSONResponse, FileResponse,
-                               StreamingResponse)
+from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import agent, store
@@ -45,10 +44,14 @@ def favicon():
     return FileResponse(LOGO)
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 def home():
-    with open(os.path.join(os.path.dirname(__file__), "templates", "index.html")) as f:
-        return f.read()
+    # The browser UI is the separate Next.js frontend. This backend serves the
+    # API only; it is self-describing here for humans and agents.
+    return {"service": "wastewatch-ai", "ui": "Next.js frontend (separate service)",
+            "endpoints": ["/health", "/map/config", "/agent/ui-schema",
+                          "/inspect", "/inspect/stream", "/trace/{id}",
+                          "/approve/{id}"]}
 
 
 @app.get("/health")
