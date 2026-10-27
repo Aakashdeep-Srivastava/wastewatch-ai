@@ -12,19 +12,27 @@ import shutil
 import cv2 as cv
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import agent, store
 
 OUT = os.getenv("ORBIT_OUT", "out")
 os.makedirs(OUT, exist_ok=True)
+STATIC = os.path.join(os.path.dirname(__file__), "static")
+LOGO = os.path.join(STATIC, "logo.png")
 MAX_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))   # 20 MB/file
 MAX_PIXELS = int(os.getenv("MAX_PIXELS", str(40_000_000)))             # ~40 MP
 REVIEWER_TOKEN = os.getenv("REVIEWER_TOKEN", "dev-reviewer-token")      # set in prod!
 
 app = FastAPI(title="WasteWatch AI")
 app.mount("/out", StaticFiles(directory=OUT), name="out")
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return FileResponse(LOGO)
 
 
 @app.get("/", response_class=HTMLResponse)
