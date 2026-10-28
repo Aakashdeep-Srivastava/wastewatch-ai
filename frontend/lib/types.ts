@@ -25,8 +25,14 @@ export interface InspectResult {
   change_score: number;
   disturbed_surface: number;
   blobs: Blob[];
+  num_regions?: number;
   image_size: { w: number; h: number };
   aoi: Bbox | null;
+  location?: string | null;
+  area_km2?: number | null;
+  dates?: { t1?: string; t2?: string } | null;
+  source?: string;
+  created?: number;
   adviser?: unknown;
   trace: TraceStep[];
   artifacts: Record<string, string>;
@@ -38,3 +44,33 @@ export type StreamEvent =
   | { type: "result"; record: InspectResult }
   | { type: "ui"; component: unknown }
   | { type: "error"; message: string };
+
+export interface Scene {
+  id: string;
+  date: string;
+  datetime: string;
+  cloud_cover: number;
+  resolution_m: number;
+  visual: string;
+  thumbnail: string | null;
+}
+
+export interface GeocodeResult {
+  name: string;
+  lat: number;
+  lon: number;
+  bbox: Bbox | null;
+}
+
+export interface AlertSummary {
+  id: string;
+  status: string;
+  location: string | null;
+  created: number | null;
+  updated: number | null;
+  num_regions: number;
+  change_score: number | null;
+  area_km2: number | null;
+  dates: { t1?: string; t2?: string } | null;
+  source: string | null;
+}

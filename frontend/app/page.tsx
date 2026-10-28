@@ -1,50 +1,111 @@
 "use client";
 
 import { useRef, useState } from "react";
-import Image from "next/image";
-import Globe, { type GlobeHandle } from "@/components/Globe";
-import InspectPanel from "@/components/InspectPanel";
-import type { Bbox, InspectResult } from "@/lib/types";
+import Header from "@/components/Header";
+import Globe, { type GlobeHandle, type Selection } from "@/components/Globe";
+import LocationStep from "@/components/LocationStep";
+import SceneStep from "@/components/SceneStep";
+import AnalysisProgress from "@/components/AnalysisProgress";
+import ResultsView from "@/components/ResultsView";
+import { streamSceneInspect, type SceneInspectBody } from "@/lib/api";
+import { bboxAreaKm2, polygonAreaKm2 } from "@/lib/geo";
+import type { Bbox, GeocodeResult, InspectResult, TraceStep } from "@/lib/types";
+
+function ringFromBbox(b: Bbox): [number, number][] {
+  return [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]];
+}
 
 export default function Home() {
-  const [aoi, setAoi] = useState<Bbox | null>(null);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [locationName, setLocationName] = useState<string | null>(null);
+  const [liveSteps, setLiveSteps] = useState<TraceStep[]>([]);
   const [result, setResult] = useState<InspectResult | null>(null);
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
   const globeRef = useRef<GlobeHandle>(null);
+
+  const areaKm2 = selection
+    ? selection.polygon.length > 4
+      ? polygonAreaKm2(selection.polygon)
+      : bboxAreaKm2(selection.bbox)
+    : 0;
+
+  function pickLocation(r: GeocodeResult) {
+    const bbox = r.bbox ?? ([r.lon - 0.05, r.lat - 0.05, r.lon + 0.05, r.lat + 0.05] as Bbox);
+    setSelection({ bbox, polygon: ringFromBbox(bbox) });
+    setLocationName(r.name.split(",").slice(0, 2).join(",").trim());
+    setResult(null);
+    globeRef.current?.flyToBbox(bbox);
+  }
+
+  function onSelect(sel: Selection | null) {
+    setSelection(sel);
+    setResult(null);
+    if (!sel) setLocationName(null);
+  }
+
+  async function runScene(body: SceneInspectBody) {
+    setRunning(true);
+    setError("");
+    setLiveSteps([]);
+    setResult(null);
+    try {
+      await streamSceneInspect(body, (ev) => {
+        if (ev.type === "step") {
+          const { type: _t, ...step } = ev;
+          setLiveSteps((prev) => [...prev, step as TraceStep]);
+        } else if (ev.type === "result") {
+          setResult(ev.record);
+        } else if (ev.type === "error") {
+          setError(ev.message);
+        }
+      });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  function reset() {
+    setResult(null);
+    setLiveSteps([]);
+    setError("");
+  }
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex h-16 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-6">
-        <div className="flex items-center gap-3">
-          <Image src="/logo.png" width={38} height={38} alt="WasteWatch AI" className="rounded-lg" priority />
-          <div>
-            <h1 className="text-base font-bold leading-tight">WasteWatch AI</h1>
-            <p className="text-xs text-slate-500">Satellite Environmental Intelligence</p>
-          </div>
-        </div>
-        <span className="flex items-center gap-2 text-xs text-slate-500">
-          <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" />
-          Agent online · human approves every alert
-        </span>
-      </header>
-
-      <main className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_400px]">
+      <Header active="inspect" />
+      <main className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_420px]">
         <div className="min-h-[420px]">
-          <Globe ref={globeRef} aoi={aoi} result={result} onAOI={setAoi} />
+          <Globe ref={globeRef} selection={selection} result={result} onSelect={onSelect} />
         </div>
 
-        <aside className="flex min-h-0 flex-col gap-4 overflow-hidden rounded-2xl border border-slate-200 bg-white p-5">
-          <section>
-            <h2 className="mb-2 text-sm font-semibold text-slate-700">Area of interest</h2>
-            <div className="rounded-lg border border-slate-200 bg-slate-50 p-2 font-mono text-xs text-slate-600 break-all">
-              {aoi ? `[${aoi.map((n) => n.toFixed(4)).join(", ")}]` : "none — draw a rectangle or use the current view on the globe"}
-            </div>
-          </section>
+        <aside className="flex min-h-0 flex-col gap-5 overflow-auto rounded-2xl border border-slate-200 bg-white p-5">
+          <LocationStep selection={selection} locationName={locationName} onPick={pickLocation} />
 
-          <InspectPanel
-            aoi={aoi}
-            onResult={setResult}
-            onDetectionFocus={() => globeRef.current?.flyToAOI()}
-          />
+          {selection && !result && !running && liveSteps.length === 0 && (
+            <SceneStep selection={selection} locationName={locationName} areaKm2={areaKm2} running={running} onRun={runScene} />
+          )}
+
+          {(running || liveSteps.length > 0 || result) && (
+            <AnalysisProgress steps={liveSteps} running={running} done={!!result} />
+          )}
+
+          {error && <p className="text-xs text-rose-600">Error: {error}</p>}
+
+          {result && (
+            <>
+              <ResultsView
+                result={result}
+                onReviewed={() => { /* status handled inside; dashboard reflects on reload */ }}
+                onFocusRegion={(b) => globeRef.current?.flyToBbox(b)}
+              />
+              <button onClick={reset} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-100">
+                Run another inspection on this area
+              </button>
+            </>
+          )}
         </aside>
       </main>
     </div>
