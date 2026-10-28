@@ -12,7 +12,11 @@ _LOCAL = os.path.join(os.path.dirname(__file__), "..", "data", "alerts.json")
 # only these transitions are allowed (human-control safety)
 _ALLOWED = {
     ("PENDING_REVIEW", "CONFIRMED"), ("PENDING_REVIEW", "DISMISSED"),
+    ("PENDING_REVIEW", "NEEDS_MORE_INFO"),
     ("NEEDS_REVIEW", "CONFIRMED"), ("NEEDS_REVIEW", "DISMISSED"),
+    ("NEEDS_REVIEW", "NEEDS_MORE_INFO"),
+    # a reviewer can still resolve a case previously flagged for more info
+    ("NEEDS_MORE_INFO", "CONFIRMED"), ("NEEDS_MORE_INFO", "DISMISSED"),
 }
 
 
@@ -47,8 +51,9 @@ def put_alert(record):
     d = _load(); d[record["id"]] = record; _save(d); return record
 
 
-def set_status(alert_id, new_status):
-    """Guarded transition. Returns {ok, status, reason}."""
+def set_status(alert_id, new_status, comment=None):
+    """Guarded transition. Returns {ok, status, reason}. Optionally records a
+    reviewer comment alongside the state change."""
     cur = get_alert(alert_id)
     if not cur:
         return {"ok": False, "status": "NOT_FOUND", "reason": "unknown alert"}
@@ -58,18 +63,23 @@ def set_status(alert_id, new_status):
                 "reason": f"transition {old} -> {new_status} not allowed"}
     if os.getenv("ORBIT_STORE") == "dynamo":
         try:
+            expr = "SET #s=:n, updated=:u"
+            names = {"#s": "status"}
+            vals = {":n": new_status, ":o": old, ":u": int(time.time())}
+            if comment is not None:
+                expr += ", #c=:c"; names["#c"] = "comment"; vals[":c"] = comment
             _dynamo().update_item(
-                Key={"id": alert_id},
-                UpdateExpression="SET #s=:n, updated=:u",
+                Key={"id": alert_id}, UpdateExpression=expr,
                 ConditionExpression="#s = :o",
-                ExpressionAttributeNames={"#s": "status"},
-                ExpressionAttributeValues={":n": new_status, ":o": old,
-                                           ":u": int(time.time())})
+                ExpressionAttributeNames=names, ExpressionAttributeValues=vals)
             return {"ok": True, "status": new_status, "reason": "updated"}
         except Exception:
             pass
     d = _load()
-    d[alert_id]["status"] = new_status; d[alert_id]["updated"] = int(time.time())
+    d[alert_id]["status"] = new_status
+    d[alert_id]["updated"] = int(time.time())
+    if comment is not None:
+        d[alert_id]["comment"] = comment
     _save(d)
     return {"ok": True, "status": new_status, "reason": "updated"}
 
@@ -81,3 +91,14 @@ def get_alert(alert_id):
         except Exception:
             pass
     return _load().get(alert_id)
+
+
+def list_alerts():
+    """All alerts, newest-updated first (for the inspections dashboard)."""
+    if os.getenv("ORBIT_STORE") == "dynamo":
+        try:
+            items = _dynamo().scan().get("Items", [])
+            return sorted(items, key=lambda r: r.get("updated", 0), reverse=True)
+        except Exception:
+            pass
+    return sorted(_load().values(), key=lambda r: r.get("updated", 0), reverse=True)

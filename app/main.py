@@ -4,8 +4,12 @@
 #   GET  /health              -> status + REAL cv2.__version__
 #   GET  /map/config          -> machine-readable map capabilities (for agents)
 #   GET  /agent/ui-schema     -> streaming-event + UI-component vocabulary
+#   GET  /geocode?q=          -> keyless place search (OpenStreetMap Nominatim)
+#   GET  /scenes?bbox=&start= -> real Sentinel-2 L2A scene search (Earth Search)
 #   POST /inspect             -> run the agent loop once, return the full result
 #   POST /inspect/stream      -> SSE: stream each agent step live, then a UI spec
+#   POST /inspect/scene/stream-> SSE: clip real Sentinel-2 scenes, then stream
+#   GET  /alerts              -> all inspections (dashboard list)
 #   GET  /trace/{id}          -> stored alert + full step trace
 #   POST /approve/{id}        -> REVIEWER-TOKEN protected; guarded state change
 # Human control is real: approval needs a token AND a legal state transition.
@@ -16,15 +20,19 @@
 # -----------------------------------------------------------------------------
 import os
 import json
+import time
 import queue
 import threading
+import urllib.parse
+import urllib.request
 import cv2 as cv
 
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 
-from . import agent, store
+from . import agent, store, satellite
 
 OUT = os.getenv("ORBIT_OUT", "out")
 os.makedirs(OUT, exist_ok=True)
@@ -131,18 +139,27 @@ def _parse_aoi(aoi):
     return [w, s, e, n]
 
 
-def _build_record(res, image_size, box):
+def _build_record(res, image_size, box, meta=None):
     """Shape the agent result into the stored/returned record (blobs in BEFORE
-    full-resolution pixel coords; image_size + aoi let the client map to geo)."""
+    full-resolution pixel coords; image_size + aoi let the client map to geo).
+    meta carries dashboard context: location, area_km2, dates."""
     v = res["verdict"]
+    meta = meta or {}
+    blobs = v.get("blobs", [])
     return {"id": res["id"], "status": v["status"],
             "candidate_type": v.get("candidate_type"),
             "display": v.get("display", ""),
             "change_score": v.get("change_score", 0.0),
             "disturbed_surface": v.get("disturbed_surface", 0.0),
-            "blobs": v.get("blobs", []),
+            "blobs": blobs,
+            "num_regions": len(blobs),
             "image_size": image_size,
             "aoi": box,
+            "location": meta.get("location"),
+            "area_km2": meta.get("area_km2"),
+            "dates": meta.get("dates"),
+            "source": meta.get("source", "upload"),
+            "created": int(time.time()),
             "adviser": v.get("adviser"),
             "trace": res["trace"],
             "artifacts": {k: "/" + p.replace("\\", "/")
@@ -196,28 +213,13 @@ def _prepare_inputs(before, after, alt_after, aoi):
     return b, a, alts, image_size, box
 
 
-@app.post("/inspect")
-async def inspect(before: UploadFile = File(...), after: UploadFile = File(...),
-                  alt_after: UploadFile = File(None), aoi: str = Form(None)):
-    b, a, alts, image_size, box = _prepare_inputs(before, after, alt_after, aoi)
-    res = agent.inspect(b, a, alt_after_paths=alts, out_dir=OUT)
-    record = _build_record(res, image_size, box)
-    store.put_alert(record)
-    return JSONResponse(record)
-
-
 def _sse(payload):
     return "data: " + json.dumps(payload) + "\n\n"
 
 
-@app.post("/inspect/stream")
-async def inspect_stream(before: UploadFile = File(...),
-                         after: UploadFile = File(...),
-                         alt_after: UploadFile = File(None),
-                         aoi: str = Form(None)):
-    """Server-Sent Events: emits one `step` event as each agent step completes,
-    then a `result` event (full record) and a `ui` event (component spec)."""
-    b, a, alts, image_size, box = _prepare_inputs(before, after, alt_after, aoi)
+def _stream_inspection(b, a, alts, image_size, box, meta=None):
+    """Shared SSE machinery: run the agent in a thread, stream each step, then
+    the result record and the agent-generated UI spec."""
     q = queue.Queue()
 
     def emit(entry):
@@ -226,7 +228,7 @@ async def inspect_stream(before: UploadFile = File(...),
     def work():
         try:
             res = agent.inspect(b, a, alt_after_paths=alts, out_dir=OUT, emit=emit)
-            record = _build_record(res, image_size, box)
+            record = _build_record(res, image_size, box, meta)
             store.put_alert(record)
             q.put({"type": "result", "record": record})
             q.put({"type": "ui", "component": _ui_spec(record)})
@@ -248,6 +250,121 @@ async def inspect_stream(before: UploadFile = File(...),
     return StreamingResponse(gen(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache",
                                       "X-Accel-Buffering": "no"})
+
+
+@app.post("/inspect")
+async def inspect(before: UploadFile = File(...), after: UploadFile = File(...),
+                  alt_after: UploadFile = File(None), aoi: str = Form(None),
+                  location: str = Form(None), area_km2: float = Form(None)):
+    b, a, alts, image_size, box = _prepare_inputs(before, after, alt_after, aoi)
+    res = agent.inspect(b, a, alt_after_paths=alts, out_dir=OUT)
+    meta = {"location": location, "area_km2": area_km2, "source": "upload"}
+    record = _build_record(res, image_size, box, meta)
+    store.put_alert(record)
+    return JSONResponse(record)
+
+
+@app.post("/inspect/stream")
+async def inspect_stream(before: UploadFile = File(...),
+                         after: UploadFile = File(...),
+                         alt_after: UploadFile = File(None),
+                         aoi: str = Form(None),
+                         location: str = Form(None),
+                         area_km2: float = Form(None)):
+    """SSE stream for an UPLOADED before/after pair."""
+    b, a, alts, image_size, box = _prepare_inputs(before, after, alt_after, aoi)
+    meta = {"location": location, "area_km2": area_km2, "source": "upload"}
+    return _stream_inspection(b, a, alts, image_size, box, meta)
+
+
+class SceneInspectReq(BaseModel):
+    aoi: list[float]
+    t1_visual: str
+    t2_visual: str
+    alt_visual: str | None = None
+    location: str | None = None
+    area_km2: float | None = None
+    t1_date: str | None = None
+    t2_date: str | None = None
+
+
+@app.post("/inspect/scene/stream")
+def inspect_scene_stream(req: SceneInspectReq):
+    """SSE stream for REAL Sentinel-2 scenes: clip both dates to the AOI, then
+    run the same streaming agent."""
+    if not satellite.AVAILABLE:
+        raise HTTPException(503, "satellite imagery unavailable (rasterio not installed)")
+    box = _parse_aoi(req.aoi)
+    if box is None:
+        raise HTTPException(400, "aoi required")
+    try:
+        b, (W, H) = satellite.fetch_clip(box, req.t1_visual,
+                                         os.path.join(OUT, "in_before.png"))
+        a, _ = satellite.fetch_clip(box, req.t2_visual,
+                                    os.path.join(OUT, "in_after.png"), out_size=(W, H))
+        alts = []
+        if req.alt_visual:
+            alt, _ = satellite.fetch_clip(box, req.alt_visual,
+                                          os.path.join(OUT, "in_alt.png"), out_size=(W, H))
+            alts = [alt]
+    except Exception as exc:                            # noqa: BLE001
+        raise HTTPException(502, f"failed to fetch imagery: {exc}")
+    meta = {"location": req.location, "area_km2": req.area_km2, "source": "sentinel-2",
+            "dates": {"t1": req.t1_date, "t2": req.t2_date}}
+    return _stream_inspection(b, a, alts, {"w": W, "h": H}, box, meta)
+
+
+@app.get("/scenes")
+def scenes(bbox: str, start: str, end: str, max_cloud: float = 30.0):
+    """Search real Sentinel-2 L2A scenes over an AOI. bbox = 'west,south,east,north'."""
+    if not satellite.AVAILABLE:
+        raise HTTPException(503, "satellite imagery unavailable (rasterio not installed)")
+    try:
+        parts = [float(x) for x in bbox.split(",")]
+    except Exception:
+        raise HTTPException(400, "bbox must be 'west,south,east,north'")
+    box = _parse_aoi(parts)
+    try:
+        return {"scenes": satellite.search_scenes(box, start, end, max_cloud=max_cloud)}
+    except Exception as exc:                            # noqa: BLE001
+        raise HTTPException(502, f"scene search failed: {exc}")
+
+
+@app.get("/geocode")
+def geocode(q: str):
+    """Keyless place search via OpenStreetMap Nominatim."""
+    url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(
+        {"q": q, "format": "json", "limit": 5})
+    gr = urllib.request.Request(url, headers={"User-Agent": "WasteWatch-AI/1.0 (demo)"})
+    try:
+        with urllib.request.urlopen(gr, timeout=15) as r:
+            data = json.loads(r.read())
+    except Exception as exc:                            # noqa: BLE001
+        raise HTTPException(502, f"geocoding failed: {exc}")
+    out = []
+    for d in data:
+        bb = d.get("boundingbox")
+        out.append({
+            "name": d.get("display_name"),
+            "lat": float(d["lat"]), "lon": float(d["lon"]),
+            # Nominatim bbox is [south, north, west, east]; convert to [w,s,e,n]
+            "bbox": [float(bb[2]), float(bb[0]), float(bb[3]), float(bb[1])] if bb else None,
+        })
+    return {"results": out}
+
+
+@app.get("/alerts")
+def alerts():
+    """All inspections for the dashboard (trimmed list view)."""
+    items = store.list_alerts()
+    return {"alerts": [{
+        "id": r.get("id"), "status": r.get("status"),
+        "location": r.get("location"), "created": r.get("created"),
+        "updated": r.get("updated"),
+        "num_regions": r.get("num_regions", len(r.get("blobs") or [])),
+        "change_score": r.get("change_score"), "area_km2": r.get("area_km2"),
+        "dates": r.get("dates"), "source": r.get("source"),
+    } for r in items]}
 
 
 @app.get("/agent/ui-schema")
@@ -284,13 +401,17 @@ def trace(alert_id: str):
 
 
 @app.post("/approve/{alert_id}")
-def approve(alert_id: str, decision: str = Form(...),
+def approve(alert_id: str, decision: str = Form(...), comment: str = Form(None),
             x_reviewer_token: str = Header(None)):
     # human control: must present the reviewer token (authorized analyst)
     if x_reviewer_token != REVIEWER_TOKEN:
         raise HTTPException(401, "reviewer token required")
-    new = "CONFIRMED" if decision == "approve" else "DISMISSED"
-    result = store.set_status(alert_id, new)
+    mapping = {"approve": "CONFIRMED", "dismiss": "DISMISSED",
+               "needs_info": "NEEDS_MORE_INFO"}
+    new = mapping.get(decision)
+    if not new:
+        raise HTTPException(400, "decision must be approve | dismiss | needs_info")
+    result = store.set_status(alert_id, new, comment=comment)
     if not result["ok"]:
         raise HTTPException(409, result["reason"])
     return JSONResponse(result)
