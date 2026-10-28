@@ -320,3 +320,63 @@ Our vision extends beyond identifying pixels that changed.
 We want to help environmental teams understand where change is happening, investigate what it may mean, and make better decisions using traceable evidence.
 
 **WasteWatch AI — From observing the Earth to acting on what matters.**
+
+---
+
+## Architecture (current build)
+
+Two services:
+
+- **Backend — FastAPI (`app/`)**: OpenCV 5 vision engine + the autonomous agent,
+  plus real Sentinel-2 imagery. Key endpoints: `/geocode` (keyless OpenStreetMap
+  place search), `/scenes` (real Sentinel-2 L2A search via Element84 Earth Search),
+  `/inspect/scene/stream` (clips the chosen scenes to the AOI and streams the agent
+  live over SSE), `/inspect/stream` (manual upload), `/alerts` (dashboard list),
+  `/approve/{id}` (token-guarded human review). The browser never talks to it
+  directly in production.
+- **Frontend — Next.js 16 / React 19 / TypeScript / Tailwind (`frontend/`)**: the
+  full 8-step journey — explore the globe, select a location (search + draw
+  polygon/rectangle), choose real satellite dates, watch the agent analyse live,
+  view results (Before / After / Change tabs, severity legend, stat tiles),
+  explore regions with a before/after slider, review (confirm / dismiss / needs
+  more info + comment), and track everything in a dashboard. It proxies `/api/*`
+  to the backend (no CORS; SSE streams through).
+
+### Real satellite imagery
+
+Step 3 uses **real Sentinel-2 L2A** from the public AWS `sentinel-cogs` bucket via
+Earth Search (STAC), with **no API key**. The backend windowed-reads the
+true-colour COG and clips it to the AOI with rasterio/GDAL — only the needed
+bytes are fetched. If rasterio is unavailable, the app degrades to manual
+before/after upload.
+
+## Run the full app
+
+Two terminals (from the repo root):
+
+```powershell
+# 1) backend
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --port 8000
+
+# 2) frontend
+cd frontend
+Copy-Item .env.local.example .env.local   # FASTAPI_ORIGIN=http://127.0.0.1:8000
+npm install
+npm run dev        # http://localhost:3000
+```
+
+## Known limitations (current build, honest ledger)
+
+- **Per-inspection images are not archived.** Clips are written to fixed files
+  (`out/in_before.png`, `in_after.png`, `change_map.png`) and overwritten each run,
+  so the dashboard shows an inspection's *metadata and regions* but not its original
+  imagery on revisit. Metadata/trace persist; per-id artifact storage is a TODO.
+- **Cloud gate is an RGB heuristic**, not the Sentinel-2 Scene Classification (SCL)
+  mask. The true-colour COG is an 8-bit visualisation, not raw reflectance.
+- **`disturbed_surface` is a heuristic**, not a verified waste classification — the
+  system flags *candidates* for human review, never confirmed violations.
+- **Auth is a shared dev reviewer token.** No per-user identity, rate limiting, or
+  production authentication yet. Set `REVIEWER_TOKEN` in production.
+- **Deployment is not wired up** (frontend + backend are two services). Local run
+  is fully working; App Runner / Vercel wiring is deferred.
