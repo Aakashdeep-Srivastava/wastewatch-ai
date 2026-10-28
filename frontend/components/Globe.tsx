@@ -122,6 +122,7 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
 
     map.on("load", () => {
       try { map.setProjection({ type: "globe" }); } catch { /* flat fallback */ }
+      map.resize(); // ensure canvas matches the (now laid-out) container
       map.addSource("sel", { type: "geojson", data: emptyFC() });
       map.addLayer({ id: "sel-fill", type: "fill", source: "sel", paint: { "fill-color": "#2563eb", "fill-opacity": 0.1 } });
       map.addLayer({ id: "sel-line", type: "line", source: "sel", paint: { "line-color": "#2563eb", "line-width": 2 } });
@@ -242,8 +243,10 @@ const Globe = forwardRef<GlobeHandle, Props>(function Globe(
   const on = "border-amber-400 text-amber-300";
 
   return (
-    <div className="relative h-full w-full overflow-hidden rounded-2xl bg-[#020914]">
-      <div ref={container} className="absolute inset-0" />
+    <div className="absolute inset-0 overflow-hidden rounded-2xl bg-[#020914]">
+      {/* MapLibre forces the container to position:relative, so it must size via
+          height:100% (not inset-0) against this definite-height parent. */}
+      <div ref={container} className="h-full w-full" />
       <div className="pointer-events-none absolute inset-0">
         <div className="pointer-events-auto absolute left-4 top-4 flex flex-wrap gap-2">
           <button className={`${btn} border-amber-400 bg-amber-400 text-slate-900 hover:bg-amber-300`} onClick={() => mapRef.current?.flyTo({ center: [73.95, 15.5], zoom: 10, speed: 0.7, essential: true })}>Fly to Goa</button>

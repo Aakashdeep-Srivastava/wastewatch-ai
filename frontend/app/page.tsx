@@ -77,7 +77,7 @@ export default function Home() {
     <div className="flex h-screen flex-col">
       <Header active="inspect" />
       <main className="grid min-h-0 flex-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_420px]">
-        <div className="min-h-[420px]">
+        <div className="relative min-h-[60vh] lg:min-h-[420px]">
           <Globe ref={globeRef} selection={selection} result={result} onSelect={onSelect} />
         </div>
 
