@@ -1,41 +1,26 @@
 "use client";
 
 import { useState } from "react";
-import { geocode } from "@/lib/api";
-import { bboxAreaKm2, fmtBbox, polygonAreaKm2 } from "@/lib/geo";
-import type { GeocodeResult } from "@/lib/types";
-import type { Selection } from "./Globe";
+import { useGeocode } from "@/lib/queries";
+import { useJourney, selectAreaKm2 } from "@/lib/store";
+import { fmtBbox } from "@/lib/geo";
 
-interface Props {
-  selection: Selection | null;
-  locationName: string | null;
-  onPick: (r: GeocodeResult) => void;
-}
-
-export default function LocationStep({ selection, locationName, onPick }: Props) {
+export default function LocationStep() {
   const [q, setQ] = useState("");
-  const [results, setResults] = useState<GeocodeResult[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
+  const selection = useJourney((s) => s.selection);
+  const locationName = useJourney((s) => s.locationName);
+  const pickLocation = useJourney((s) => s.pickLocation);
+  const area = useJourney(selectAreaKm2);
+  const geo = useGeocode();
 
-  async function search(e: React.FormEvent) {
+  function search(e: React.FormEvent) {
     e.preventDefault();
-    if (!q.trim()) return;
-    setBusy(true); setErr(""); setResults([]);
-    try {
-      setResults(await geocode(q));
-    } catch {
-      setErr("Search failed.");
-    } finally {
-      setBusy(false);
-    }
+    const term = q.trim();
+    if (!term) return;
+    geo.mutate(term);
   }
 
-  const area = selection
-    ? selection.polygon.length > 4
-      ? polygonAreaKm2(selection.polygon)
-      : bboxAreaKm2(selection.bbox)
-    : 0;
+  const results = geo.data ?? [];
 
   return (
     <section>
@@ -49,18 +34,18 @@ export default function LocationStep({ selection, locationName, onPick }: Props)
           placeholder="Search e.g. Goa, India"
           className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
         />
-        <button className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800" disabled={busy}>
-          {busy ? "…" : "Search"}
+        <button className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800" disabled={geo.isPending}>
+          {geo.isPending ? "…" : "Search"}
         </button>
       </form>
-      {err && <p className="mt-2 text-xs text-rose-600">{err}</p>}
+      {geo.isError && <p className="mt-2 text-xs text-rose-600">Search failed.</p>}
 
       {results.length > 0 && (
         <ul className="mt-2 divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200">
           {results.map((r, i) => (
             <li key={i}>
               <button
-                onClick={() => { onPick(r); setResults([]); setQ(r.name.split(",")[0]); }}
+                onClick={() => { pickLocation(r); setQ((r.name ?? "").split(",")[0]); geo.reset(); }}
                 className="block w-full px-3 py-2 text-left text-xs hover:bg-slate-50"
               >
                 {r.name}

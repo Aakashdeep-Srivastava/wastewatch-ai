@@ -1,6 +1,6 @@
 "use client";
 
-import type { TraceStep } from "@/lib/types";
+import { useJourney } from "@/lib/store";
 
 const CHECKLIST: { label: string; tools: string[] }[] = [
   { label: "Checking image quality", tools: ["cloud_gate", "select_alternate_date"] },
@@ -12,13 +12,11 @@ const CHECKLIST: { label: string; tools: string[] }[] = [
   { label: "Generating results", tools: ["__result__"] },
 ];
 
-interface Props {
-  steps: TraceStep[];
-  running: boolean;
-  done: boolean; // result received
-}
+export default function AnalysisProgress() {
+  const steps = useJourney((s) => s.liveSteps);
+  const running = useJourney((s) => s.running);
+  const done = useJourney((s) => !!s.result);
 
-export default function AnalysisProgress({ steps, running, done }: Props) {
   if (!running && steps.length === 0 && !done) return null;
   const seen = new Set(steps.map((s) => s.tool));
   if (done) seen.add("__result__");

@@ -22,6 +22,7 @@ import os
 import json
 import time
 import queue
+import logging
 import threading
 import urllib.parse
 import urllib.request
@@ -30,9 +31,14 @@ import cv2 as cv
 from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 
 from . import agent, store, satellite, nemotron
+from .models import (
+    SceneInspectReq, InspectRecord, AlertsResponse, ScenesResponse,
+    GeocodeResponse, HealthResponse, ApproveResult,
+)
+
+logger = logging.getLogger("wastewatch")
 
 OUT = os.getenv("ORBIT_OUT", "out")
 os.makedirs(OUT, exist_ok=True)
@@ -62,7 +68,7 @@ def home():
                           "/approve/{id}"]}
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health():
     return {"ok": True, "opencv_version": cv.__version__, "service": "wastewatch-ai",
             "ai": nemotron.provider_info()}
@@ -147,26 +153,34 @@ def _build_record(res, image_size, box, meta=None):
     v = res["verdict"]
     meta = meta or {}
     blobs = v.get("blobs", [])
-    return {"id": res["id"], "status": v["status"],
-            "candidate_type": v.get("candidate_type"),
-            "display": v.get("display", ""),
-            "change_score": v.get("change_score", 0.0),
-            "disturbed_surface": v.get("disturbed_surface", 0.0),
-            "blobs": blobs,
-            "num_regions": len(blobs),
-            "image_size": image_size,
-            "aoi": box,
-            "location": meta.get("location"),
-            "area_km2": meta.get("area_km2"),
-            "dates": meta.get("dates"),
-            "source": meta.get("source", "upload"),
-            "created": int(time.time()),
-            "adviser": v.get("adviser"),
-            "enrichment": v.get("enrichment"),
-            "brief": v.get("brief"),
-            "trace": res["trace"],
-            "artifacts": {k: "/" + p.replace("\\", "/")
-                          for k, p in res["artifacts"].items()}}
+    rec = {"id": res["id"], "status": v["status"],
+           "candidate_type": v.get("candidate_type"),
+           "display": v.get("display", ""),
+           "change_score": v.get("change_score", 0.0),
+           "disturbed_surface": v.get("disturbed_surface", 0.0),
+           "blobs": blobs,
+           "num_regions": len(blobs),
+           "image_size": image_size,
+           "aoi": box,
+           "location": meta.get("location"),
+           "area_km2": meta.get("area_km2"),
+           "dates": meta.get("dates"),
+           "source": meta.get("source", "upload"),
+           "created": int(time.time()),
+           "adviser": v.get("adviser"),
+           "enrichment": v.get("enrichment"),
+           "brief": v.get("brief"),
+           "trace": res["trace"],
+           "artifacts": {k: "/" + p.replace("\\", "/")
+                         for k, p in res["artifacts"].items()}}
+    # Validate the shape via Pydantic. If an upstream shape surprise occurs we
+    # degrade to the raw dict rather than 500 the live inspection (the warning
+    # makes the failure visible instead of silent).
+    try:
+        return InspectRecord(**rec).model_dump()
+    except Exception as exc:                            # noqa: BLE001
+        logger.warning("InspectRecord validation failed; returning raw dict: %s", exc)
+        return rec
 
 
 def _ui_spec(record):
@@ -287,7 +301,7 @@ def _stream_inspection(b, a, alts, image_size, box, meta=None):
                                       "X-Accel-Buffering": "no"})
 
 
-@app.post("/inspect")
+@app.post("/inspect", response_model=InspectRecord)
 async def inspect(before: UploadFile = File(...), after: UploadFile = File(...),
                   alt_after: UploadFile = File(None), aoi: str = Form(None),
                   location: str = Form(None), area_km2: float = Form(None)):
@@ -311,17 +325,6 @@ async def inspect_stream(before: UploadFile = File(...),
     b, a, alts, image_size, box = _prepare_inputs(before, after, alt_after, aoi)
     meta = {"location": location, "area_km2": area_km2, "source": "upload"}
     return _stream_inspection(b, a, alts, image_size, box, meta)
-
-
-class SceneInspectReq(BaseModel):
-    aoi: list[float]
-    t1_visual: str
-    t2_visual: str
-    alt_visual: str | None = None
-    location: str | None = None
-    area_km2: float | None = None
-    t1_date: str | None = None
-    t2_date: str | None = None
 
 
 @app.post("/inspect/scene/stream")
@@ -350,7 +353,7 @@ def inspect_scene_stream(req: SceneInspectReq):
     return _stream_inspection(b, a, alts, {"w": W, "h": H}, box, meta)
 
 
-@app.get("/scenes")
+@app.get("/scenes", response_model=ScenesResponse)
 def scenes(bbox: str, start: str, end: str, max_cloud: float = 30.0):
     """Search real Sentinel-2 L2A scenes over an AOI. bbox = 'west,south,east,north'."""
     if not satellite.AVAILABLE:
@@ -366,7 +369,7 @@ def scenes(bbox: str, start: str, end: str, max_cloud: float = 30.0):
         raise HTTPException(502, f"scene search failed: {exc}")
 
 
-@app.get("/geocode")
+@app.get("/geocode", response_model=GeocodeResponse)
 def geocode(q: str):
     """Keyless place search via OpenStreetMap Nominatim."""
     url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(
@@ -389,7 +392,7 @@ def geocode(q: str):
     return {"results": out}
 
 
-@app.get("/alerts")
+@app.get("/alerts", response_model=AlertsResponse)
 def alerts():
     """All inspections for the dashboard (trimmed list view)."""
     items = store.list_alerts()
@@ -436,7 +439,7 @@ def trace(alert_id: str):
     return JSONResponse(store.get_alert(alert_id) or {"error": "not found"})
 
 
-@app.post("/approve/{alert_id}")
+@app.post("/approve/{alert_id}", response_model=ApproveResult)
 def approve(alert_id: str, decision: str = Form(...), comment: str = Form(None),
             x_reviewer_token: str = Header(None)):
     # human control: must present the reviewer token (authorized analyst)

@@ -1,14 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { artifactUrl, review } from "@/lib/api";
-import type { Bbox, Blob, InspectResult } from "@/lib/types";
-
-interface Props {
-  result: InspectResult;
-  onReviewed: (status: string) => void;
-  onFocusRegion: (b: Bbox) => void;
-}
+import { artifactUrl } from "@/lib/api";
+import { useReview } from "@/lib/queries";
+import { useJourney } from "@/lib/store";
+import type { Bbox, Blob } from "@/lib/types";
 
 const STATUS_STYLE: Record<string, string> = {
   PENDING_REVIEW: "bg-amber-100 text-amber-800 ring-amber-200",
@@ -47,12 +43,17 @@ function BeforeAfter({ before, after }: { before: string; after: string }) {
   );
 }
 
-export default function ResultsView({ result, onReviewed, onFocusRegion }: Props) {
+export default function ResultsView() {
+  const result = useJourney((s) => s.result);
+  const requestFlyTo = useJourney((s) => s.requestFlyTo);
+  const reviewMut = useReview();
   const [tab, setTab] = useState<"before" | "after" | "change" | "details">("change");
   const [token, setToken] = useState("dev-reviewer-token");
   const [comment, setComment] = useState("");
-  const [status, setStatus] = useState(result.status);
+  const [status, setStatus] = useState(result?.status ?? "");
   const [msg, setMsg] = useState<{ t: string; k: "" | "ok" | "err" }>({ t: "", k: "" });
+
+  if (!result) return null;
 
   const cb = `?id=${result.id}`;
   const before = artifactUrl("/out/in_before.png") + cb;
@@ -65,15 +66,17 @@ export default function ResultsView({ result, onReviewed, onFocusRegion }: Props
     ? (maxArea / (size.w * size.h)) * result.area_km2 : null;
   const reviewable = status === "PENDING_REVIEW" || status === "NEEDS_REVIEW" || status === "NEEDS_MORE_INFO";
 
-  async function submit(decision: "approve" | "dismiss" | "needs_info") {
-    try {
-      const d = await review(result.id, decision, token, comment);
-      setStatus(d.status);
-      setMsg({ t: "Recorded: " + d.status.replace(/_/g, " "), k: "ok" });
-      onReviewed(d.status);
-    } catch (e) {
-      setMsg({ t: (e as Error).message, k: "err" });
-    }
+  function submit(decision: "approve" | "dismiss" | "needs_info") {
+    reviewMut.mutate(
+      { id: result!.id, decision, token, comment },
+      {
+        onSuccess: (d) => {
+          setStatus(d.status);
+          setMsg({ t: "Recorded: " + d.status.replace(/_/g, " "), k: "ok" });
+        },
+        onError: (e) => setMsg({ t: (e as Error).message, k: "err" }),
+      },
+    );
   }
 
   const tabBtn = (id: typeof tab, label: string) => (
@@ -256,7 +259,7 @@ export default function ResultsView({ result, onReviewed, onFocusRegion }: Props
               const sev = severity(b.disturbed_surface);
               const sevColor = sev === "High" ? "text-rose-600" : sev === "Medium" ? "text-amber-600" : "text-emerald-600";
               return (
-                <button key={i} onClick={() => onFocusRegion(regionBbox(b, result.aoi!, size))}
+                <button key={i} onClick={() => requestFlyTo(regionBbox(b, result.aoi!, size))}
                   className="block w-full rounded-lg border border-slate-200 p-2 text-left text-xs hover:border-blue-400">
                   <div className="flex justify-between">
                     <b className="text-slate-700">#{i + 1}</b>

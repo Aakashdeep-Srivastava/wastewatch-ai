@@ -1,17 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { searchScenes, type SceneInspectBody } from "@/lib/api";
+import { useScenes, useRunInspection } from "@/lib/queries";
+import { useJourney, selectAreaKm2 } from "@/lib/store";
 import type { Scene } from "@/lib/types";
-import type { Selection } from "./Globe";
-
-interface Props {
-  selection: Selection | null;
-  locationName: string | null;
-  areaKm2: number;
-  running: boolean;
-  onRun: (body: SceneInspectBody) => void;
-}
 
 function yearAgo(): string {
   const d = new Date();
@@ -19,47 +11,64 @@ function yearAgo(): string {
   return d.toISOString().slice(0, 10);
 }
 
-export default function SceneStep({ selection, locationName, areaKm2, running, onRun }: Props) {
+export default function SceneStep() {
+  const selection = useJourney((s) => s.selection);
+  const locationName = useJourney((s) => s.locationName);
+  const running = useJourney((s) => s.running);
+  const areaKm2 = useJourney(selectAreaKm2);
+
+  const scenesMut = useScenes();
+  const { run } = useRunInspection();
+
   const [start, setStart] = useState(yearAgo());
   const [end, setEnd] = useState(new Date().toISOString().slice(0, 10));
   const [maxCloud, setMaxCloud] = useState(20);
-  const [scenes, setScenes] = useState<Scene[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
   const [t1, setT1] = useState<string>("");
   const [t2, setT2] = useState<string>("");
   const [alt, setAlt] = useState<string>("");
 
-  async function find() {
+  const scenes: Scene[] = scenesMut.data ?? [];
+
+  function find() {
     if (!selection) return;
-    setLoading(true); setErr(""); setScenes([]);
-    try {
-      const s = await searchScenes(selection.bbox, start, end, maxCloud);
-      setScenes(s);
-      if (s.length) { setT2(s[0].id); setT1(s[s.length - 1].id); }
-      if (!s.length) setErr("No clear scenes found. Widen the date range or cloud limit.");
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
+    scenesMut.mutate(
+      { bbox: selection.bbox, start, end, maxCloud },
+      {
+        onSuccess: (s) => {
+          if (s.length) {
+            setT2(s[0].id);
+            setT1(s[s.length - 1].id);
+          }
+        },
+      },
+    );
   }
 
   const byId = (id: string) => scenes.find((s) => s.id === id) || null;
-  function run() {
-    const a = byId(t1), b = byId(t2);
+
+  function runInspection() {
+    const a = byId(t1);
+    const b = byId(t2);
     if (!selection || !a || !b) return;
-    onRun({
+    run({
       aoi: selection.bbox,
-      t1_visual: a.visual, t2_visual: b.visual,
+      t1_visual: a.visual,
+      t2_visual: b.visual,
       alt_visual: byId(alt)?.visual ?? null,
       location: locationName,
       area_km2: Number(areaKm2.toFixed(2)),
-      t1_date: a.date, t2_date: b.date,
+      t1_date: a.date,
+      t2_date: b.date,
     });
   }
 
   if (!selection) return null;
+
+  const err = scenesMut.isError
+    ? (scenesMut.error as Error).message
+    : scenesMut.isSuccess && scenes.length === 0
+      ? "No clear scenes found. Widen the date range or cloud limit."
+      : "";
 
   const Thumb = ({ s }: { s: Scene | null }) =>
     s ? (
@@ -88,8 +97,8 @@ export default function SceneStep({ selection, locationName, areaKm2, running, o
         Max cloud cover: <b className="text-slate-700">{maxCloud}%</b>
         <input type="range" min={0} max={80} value={maxCloud} onChange={(e) => setMaxCloud(Number(e.target.value))} className="w-full" />
       </label>
-      <button onClick={find} disabled={loading} className="mt-2 w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50">
-        {loading ? "Searching Sentinel-2…" : "Find available images"}
+      <button onClick={find} disabled={scenesMut.isPending} className="mt-2 w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-semibold text-white hover:bg-blue-500 disabled:opacity-50">
+        {scenesMut.isPending ? "Searching Sentinel-2…" : "Find available images"}
       </button>
       {err && <p className="mt-2 text-xs text-rose-600">{err}</p>}
 
@@ -118,7 +127,7 @@ export default function SceneStep({ selection, locationName, areaKm2, running, o
               {scenes.map((s) => <option key={s.id} value={s.id}>{s.date} · {s.cloud_cover}%</option>)}
             </select>
           </div>
-          <button onClick={run} disabled={running || !t1 || !t2} className="w-full rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50">
+          <button onClick={runInspection} disabled={running || !t1 || !t2} className="w-full rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50">
             {running ? "Running inspection…" : "Run inspection →"}
           </button>
           <p className="text-[11px] text-slate-400">Choose clear, low-cloud images for reliable change detection.</p>

@@ -1,10 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import Header from "@/components/Header";
-import { listAlerts } from "@/lib/api";
-import type { AlertSummary } from "@/lib/types";
+import { useAlerts } from "@/lib/queries";
 
 const LABEL: Record<string, { text: string; cls: string }> = {
   PENDING_REVIEW: { text: "Pending Review", cls: "bg-amber-100 text-amber-800" },
@@ -33,14 +32,8 @@ function fmtDate(ts: number | null): string {
 }
 
 export default function Dashboard() {
-  const [alerts, setAlerts] = useState<AlertSummary[]>([]);
   const [filter, setFilter] = useState<Filter>("All");
-  const [loading, setLoading] = useState(true);
-  const [err, setErr] = useState("");
-
-  useEffect(() => {
-    listAlerts().then(setAlerts).catch((e) => setErr(e.message)).finally(() => setLoading(false));
-  }, []);
+  const { data: alerts = [], isLoading, isError, error } = useAlerts();
 
   const rows = alerts.filter((a) => matches(filter, a.status));
 
@@ -68,10 +61,10 @@ export default function Dashboard() {
             ))}
           </div>
 
-          {loading ? (
+          {isLoading ? (
             <p className="text-sm text-slate-500">Loading…</p>
-          ) : err ? (
-            <p className="text-sm text-rose-600">Error: {err}</p>
+          ) : isError ? (
+            <p className="text-sm text-rose-600">Error: {(error as Error).message}</p>
           ) : rows.length === 0 ? (
             <p className="rounded-lg border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500">
               No inspections yet. <Link href="/" className="font-semibold text-blue-600">Start one →</Link>
