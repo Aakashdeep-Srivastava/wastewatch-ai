@@ -28,17 +28,43 @@ import urllib.parse
 import urllib.request
 import cv2 as cv
 
-from fastapi import FastAPI, UploadFile, File, Form, Header, HTTPException
+from fastapi import (FastAPI, UploadFile, File, Form, Header, HTTPException,
+                     Request, Depends)
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import agent, store, satellite, nemotron
+from . import agent, store, satellite, nemotron, ratelimit
 from .models import (
     SceneInspectReq, InspectRecord, AlertsResponse, ScenesResponse,
-    GeocodeResponse, HealthResponse, ApproveResult,
+    GeocodeResponse, HealthResponse, ApproveResult, LimitOverrides,
 )
 
 logger = logging.getLogger("wastewatch")
+
+
+# -----------------------------------------------------------------------------
+# Cost-aware rate limiting (see app/ratelimit.py). The client key is the real
+# caller IP: behind the Vercel proxy that is the first x-forwarded-for hop.
+# -----------------------------------------------------------------------------
+def _client_ip(request: Request) -> str:
+    if os.getenv("RL_TRUST_FORWARDED", "on").lower() in ("1", "true", "on", "yes"):
+        xff = request.headers.get("x-forwarded-for")
+        if xff:
+            return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def rate_limit(tier: str):
+    """FastAPI dependency: enforce the cost tier, 429 with Retry-After if over."""
+    def _dep(request: Request):
+        res = ratelimit.check(tier, _client_ip(request))
+        if not res["allowed"]:
+            raise HTTPException(
+                status_code=429,
+                detail=f"rate limit ({tier}) exceeded; retry in {res['retry_after']}s",
+                headers={"Retry-After": str(int(res["retry_after"]) + 1)})
+        return res
+    return _dep
 
 OUT = os.getenv("ORBIT_OUT", "out")
 os.makedirs(OUT, exist_ok=True)
@@ -273,6 +299,7 @@ def _stream_inspection(b, a, alts, image_size, box, meta=None):
         q.put({"type": "step", **entry})
 
     def work():
+        ratelimit.inspection_started()                 # feeds the adaptive factor
         try:
             res = agent.inspect(b, a, alt_after_paths=alts, out_dir=OUT, emit=emit,
                                 aoi=box, location=(meta or {}).get("location"),
@@ -284,6 +311,7 @@ def _stream_inspection(b, a, alts, image_size, box, meta=None):
         except Exception as exc:                       # noqa: BLE001 (stream it)
             q.put({"type": "error", "message": str(exc)})
         finally:
+            ratelimit.inspection_finished()
             q.put(None)
 
     threading.Thread(target=work, daemon=True).start()
@@ -301,20 +329,25 @@ def _stream_inspection(b, a, alts, image_size, box, meta=None):
                                       "X-Accel-Buffering": "no"})
 
 
-@app.post("/inspect", response_model=InspectRecord)
+@app.post("/inspect", response_model=InspectRecord,
+          dependencies=[Depends(rate_limit("expensive"))])
 async def inspect(before: UploadFile = File(...), after: UploadFile = File(...),
                   alt_after: UploadFile = File(None), aoi: str = Form(None),
                   location: str = Form(None), area_km2: float = Form(None)):
     b, a, alts, image_size, box = _prepare_inputs(before, after, alt_after, aoi)
-    res = agent.inspect(b, a, alt_after_paths=alts, out_dir=OUT,
-                        aoi=box, location=location)
+    ratelimit.inspection_started()
+    try:
+        res = agent.inspect(b, a, alt_after_paths=alts, out_dir=OUT,
+                            aoi=box, location=location)
+    finally:
+        ratelimit.inspection_finished()
     meta = {"location": location, "area_km2": area_km2, "source": "upload"}
     record = _build_record(res, image_size, box, meta)
     store.put_alert(record)
     return JSONResponse(record)
 
 
-@app.post("/inspect/stream")
+@app.post("/inspect/stream", dependencies=[Depends(rate_limit("expensive"))])
 async def inspect_stream(before: UploadFile = File(...),
                          after: UploadFile = File(...),
                          alt_after: UploadFile = File(None),
@@ -327,7 +360,7 @@ async def inspect_stream(before: UploadFile = File(...),
     return _stream_inspection(b, a, alts, image_size, box, meta)
 
 
-@app.post("/inspect/scene/stream")
+@app.post("/inspect/scene/stream", dependencies=[Depends(rate_limit("expensive"))])
 def inspect_scene_stream(req: SceneInspectReq):
     """SSE stream for REAL Sentinel-2 scenes: clip both dates to the AOI, then
     run the same streaming agent."""
@@ -353,7 +386,8 @@ def inspect_scene_stream(req: SceneInspectReq):
     return _stream_inspection(b, a, alts, {"w": W, "h": H}, box, meta)
 
 
-@app.get("/scenes", response_model=ScenesResponse)
+@app.get("/scenes", response_model=ScenesResponse,
+         dependencies=[Depends(rate_limit("moderate"))])
 def scenes(bbox: str, start: str, end: str, max_cloud: float = 30.0):
     """Search real Sentinel-2 L2A scenes over an AOI. bbox = 'west,south,east,north'."""
     if not satellite.AVAILABLE:
@@ -369,7 +403,8 @@ def scenes(bbox: str, start: str, end: str, max_cloud: float = 30.0):
         raise HTTPException(502, f"scene search failed: {exc}")
 
 
-@app.get("/geocode", response_model=GeocodeResponse)
+@app.get("/geocode", response_model=GeocodeResponse,
+         dependencies=[Depends(rate_limit("moderate"))])
 def geocode(q: str):
     """Keyless place search via OpenStreetMap Nominatim."""
     url = "https://nominatim.openstreetmap.org/search?" + urllib.parse.urlencode(
@@ -392,7 +427,8 @@ def geocode(q: str):
     return {"results": out}
 
 
-@app.get("/alerts", response_model=AlertsResponse)
+@app.get("/alerts", response_model=AlertsResponse,
+         dependencies=[Depends(rate_limit("cheap"))])
 def alerts():
     """All inspections for the dashboard (trimmed list view)."""
     items = store.list_alerts()
@@ -454,3 +490,23 @@ def approve(alert_id: str, decision: str = Form(...), comment: str = Form(None),
     if not result["ok"]:
         raise HTTPException(409, result["reason"])
     return JSONResponse(result)
+
+
+@app.get("/limits")
+def limits():
+    """Observe the live cost-aware rate-limit + AI-budget state. Shows the
+    effective (adaptive) limits, 24h AI spend vs budget, and whether the backend
+    is currently degraded to CV-only to protect spend."""
+    return ratelimit.snapshot()
+
+
+@app.post("/admin/limits")
+def admin_limits(overrides: LimitOverrides, x_reviewer_token: str = Header(None)):
+    """Tune rate limits / AI budget AT RUNTIME (no redeploy) — reviewer-token
+    guarded. Send a field to override it; omitted fields stay as they are."""
+    if x_reviewer_token != REVIEWER_TOKEN:
+        raise HTTPException(401, "reviewer token required")
+    for k, v in overrides.model_dump().items():
+        if v is not None:
+            ratelimit.set_override(k, v)
+    return ratelimit.snapshot()

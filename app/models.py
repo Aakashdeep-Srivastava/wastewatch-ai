@@ -148,3 +148,12 @@ class ApproveResult(BaseModel):
     ok: bool
     status: str
     reason: str
+
+
+class LimitOverrides(BaseModel):
+    """Runtime rate-limit tuning (POST /admin/limits). Any field left null is
+    unchanged; send a value to override, or clear via the endpoint semantics."""
+    RL_EXPENSIVE_PER_HOUR: float | None = None
+    RL_MODERATE_PER_MIN: float | None = None
+    RL_CHEAP_PER_MIN: float | None = None
+    AI_BUDGET_CALLS_PER_DAY: float | None = None

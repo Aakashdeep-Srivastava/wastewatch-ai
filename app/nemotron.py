@@ -29,6 +29,8 @@ import base64
 import json
 import os
 
+from . import ratelimit
+
 BASE_URL = os.getenv("NEBIUS_BASE_URL", "https://api.studio.nebius.com/v1/")
 VL_MODEL = os.getenv("NEMOTRON_VL_MODEL", "nvidia/Nemotron-3.5-Super-VL")
 REASON_MODEL = os.getenv("NEMOTRON_REASON_MODEL", "nvidia/nemotron-3-super-120b-a12b")
@@ -92,6 +94,8 @@ def vlm_classify(crop_path):
     client = _get_client()
     if client is None:
         return None
+    if not ratelimit.ai_allowed():          # daily AI spend ceiling -> CV-only
+        return None
     try:
         with open(crop_path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode("ascii")
@@ -114,6 +118,7 @@ def vlm_classify(crop_path):
             ]}],
             max_tokens=220, temperature=0.0,
         )
+        ratelimit.record_ai_call()          # count the paid call against budget
         note = _extract_json(resp.choices[0].message.content)
         if note is not None:
             note["model"] = VL_MODEL
@@ -136,6 +141,8 @@ def intelligence_brief(context, deep=False):
     """
     client = _get_client()
     if client is None:
+        return None
+    if not ratelimit.ai_allowed():          # daily AI spend ceiling -> CV-only
         return None
     model = DEEP_MODEL if deep else REASON_MODEL
     system = (
@@ -165,6 +172,7 @@ def intelligence_brief(context, deep=False):
                       {"role": "user", "content": user}],
             max_tokens=500, temperature=0.1,
         )
+        ratelimit.record_ai_call()          # count the paid call against budget
         brief = _extract_json(resp.choices[0].message.content)
         if brief is not None:
             brief["model"] = model
