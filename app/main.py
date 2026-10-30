@@ -32,7 +32,7 @@ from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agent, store, satellite
+from . import agent, store, satellite, nemotron
 
 OUT = os.getenv("ORBIT_OUT", "out")
 os.makedirs(OUT, exist_ok=True)
@@ -64,7 +64,8 @@ def home():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "opencv_version": cv.__version__, "service": "wastewatch-ai"}
+    return {"ok": True, "opencv_version": cv.__version__, "service": "wastewatch-ai",
+            "ai": nemotron.provider_info()}
 
 
 # -----------------------------------------------------------------------------
@@ -161,6 +162,8 @@ def _build_record(res, image_size, box, meta=None):
             "source": meta.get("source", "upload"),
             "created": int(time.time()),
             "adviser": v.get("adviser"),
+            "enrichment": v.get("enrichment"),
+            "brief": v.get("brief"),
             "trace": res["trace"],
             "artifacts": {k: "/" + p.replace("\\", "/")
                           for k, p in res["artifacts"].items()}}
@@ -183,6 +186,36 @@ def _ui_spec(record):
     if record.get("display"):
         children.append({"type": "text", "variant": "muted",
                          "value": record["display"]})
+    brief = record.get("brief")
+    if brief:
+        children.append({"type": "brief", "title": "Nemotron intelligence brief",
+                         "provider": "NVIDIA Nemotron on Nebius Token Factory",
+                         "headline": brief.get("headline"),
+                         "likely_cause": brief.get("likely_cause"),
+                         "legality": brief.get("legality"),
+                         "severity": brief.get("severity"),
+                         "recommended_action": brief.get("recommended_action"),
+                         "confidence": brief.get("confidence"),
+                         "rationale": brief.get("rationale"),
+                         "model": brief.get("model")})
+    enr = record.get("enrichment")
+    if enr:
+        fac = enr.get("nearest_waste_facility") or {}
+        chips = []
+        if fac.get("distance_m") is not None:
+            chips.append({"label": "Nearest permitted site",
+                          "value": f"{fac['distance_m']} m ({fac.get('kind')})"})
+        elif fac.get("note"):
+            chips.append({"label": "Permitted sites nearby", "value": fac["note"]})
+        aq = enr.get("air_quality") or {}
+        if aq.get("pm2_5") is not None:
+            chips.append({"label": "PM2.5", "value": f"{aq['pm2_5']} {aq.get('units')}"})
+        news = enr.get("news") or {}
+        if news.get("results"):
+            chips.append({"label": "Local reports", "value": f"{len(news['results'])} found"})
+        if chips:
+            children.append({"type": "enrichment",
+                             "title": "Global environmental context", "chips": chips})
     blobs = record.get("blobs") or []
     if blobs:
         children.append({"type": "cards", "title": f"Detections ({len(blobs)})",
@@ -227,7 +260,9 @@ def _stream_inspection(b, a, alts, image_size, box, meta=None):
 
     def work():
         try:
-            res = agent.inspect(b, a, alt_after_paths=alts, out_dir=OUT, emit=emit)
+            res = agent.inspect(b, a, alt_after_paths=alts, out_dir=OUT, emit=emit,
+                                aoi=box, location=(meta or {}).get("location"),
+                                dates=(meta or {}).get("dates"))
             record = _build_record(res, image_size, box, meta)
             store.put_alert(record)
             q.put({"type": "result", "record": record})
@@ -257,7 +292,8 @@ async def inspect(before: UploadFile = File(...), after: UploadFile = File(...),
                   alt_after: UploadFile = File(None), aoi: str = Form(None),
                   location: str = Form(None), area_km2: float = Form(None)):
     b, a, alts, image_size, box = _prepare_inputs(before, after, alt_after, aoi)
-    res = agent.inspect(b, a, alt_after_paths=alts, out_dir=OUT)
+    res = agent.inspect(b, a, alt_after_paths=alts, out_dir=OUT,
+                        aoi=box, location=location)
     meta = {"location": location, "area_km2": area_km2, "source": "upload"}
     record = _build_record(res, image_size, box, meta)
     store.put_alert(record)

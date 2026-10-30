@@ -17,6 +17,30 @@ export interface TraceStep {
   t: number;
 }
 
+export interface NemotronBrief {
+  headline?: string;
+  likely_cause?: string;
+  legality?: string;
+  severity?: string;
+  recommended_action?: string;
+  confidence?: number;
+  rationale?: string;
+  model?: string;
+}
+
+export interface Enrichment {
+  centroid?: { lat: number; lon: number };
+  nearest_waste_facility?: {
+    name?: string | null;
+    kind?: string | null;
+    distance_m?: number | null;
+    count_within_radius?: number;
+    note?: string;
+  } | null;
+  air_quality?: { pm2_5?: number; pm10?: number; units?: string; time?: string } | null;
+  news?: { query?: string; results?: { title?: string; url?: string }[] } | null;
+}
+
 export interface InspectResult {
   id: string;
   status: string;
@@ -33,7 +57,9 @@ export interface InspectResult {
   dates?: { t1?: string; t2?: string } | null;
   source?: string;
   created?: number;
-  adviser?: unknown;
+  adviser?: { visual_category?: string; confidence?: number; reason_short?: string; model?: string } | null;
+  enrichment?: Enrichment | null;
+  brief?: NemotronBrief | null;
   trace: TraceStep[];
   artifacts: Record<string, string>;
 }

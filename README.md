@@ -2,6 +2,100 @@
 
 **An autonomous satellite monitoring system that detects environmental changes, investigates uncertain evidence, and turns observations into actionable, human-verified intelligence.**
 
+> **License:** MIT (see [LICENSE](LICENSE)).
+
+---
+
+## 🏆 Nebius × NVIDIA Global AI Hackathon — Best Apps & Agents
+
+**Track:** Best Apps & Agents · **License:** MIT (OSI-approved, at repo root).
+
+WasteWatch answers a question raw change-detection can't: a satellite shows *where* the
+ground changed — **NVIDIA Nemotron on Nebius Token Factory, fused with open
+environmental data from the US / EU / India, explains _what it likely is, whether it
+is near a permitted site, how severe it is_, and drafts a regulator-ready brief that a
+human confirms.**
+
+### How the required stack is used
+
+| Requirement | Where in this repo |
+|---|---|
+| **Runs on Nebius** | All AI inference goes through **Nebius Token Factory** (OpenAI-compatible endpoint) — `app/nemotron.py`. Backend deploys on **Nebius AI Cloud**. |
+| **≥1 NVIDIA open model** | **NVIDIA Nemotron**, used in a tiered agent (below). |
+| **NVIDIA agentic framework** | The Nemotron reasoning step is also registered as an **NVIDIA NeMo Agent Toolkit** function/workflow — `app/nat_agent.py`, `nat_config.yml` (optional orchestration; see note). |
+| **Best Use of Tavily** | Live local dumping/landfill reports via Tavily enrichment — `app/enrich.py`. |
+
+### Tiered Nemotron agent (fast / vision / deep)
+
+| Tier | Model | Job |
+|---|---|---|
+| Vision | `Nemotron-3.5-Super-VL` | Look at the disputed crop and name what it visually is |
+| Reasoning | `nemotron-3-super-120b-a12b` | Fuse CV metrics + open data → the intelligence brief |
+| Deep | `Nemotron-3-Ultra-550b-a55b` | High-severity cases escalate to the flagship reasoner |
+
+The **deterministic CV policy remains authoritative** — Nemotron is advisory and never
+sets a review state. CV *measures*, the policy *decides*, Nemotron *explains*, a human
+*confirms*. If `NEBIUS_API_KEY` is unset the app runs the CV pipeline only; **no mock
+AI output is ever substituted.**
+
+### Global environmental data layer (`app/enrich.py`)
+
+For any detected change worldwide we ask the open record *"what is officially known
+here?"* — the signal Nemotron reasons over for legality and severity:
+
+- **OpenStreetMap Overpass** (keyless) — distance to the nearest mapped/permitted waste
+  facility. *A change far from any permitted site leans illegal; one on top of a landfill
+  leans permitted expansion.* Works identically in Goa, Ohio, and Bavaria.
+- **Open-Meteo Air Quality** (keyless) — PM2.5 / PM10 near the site (dumping/burning
+  correlates with AQ spikes).
+- **Tavily** (optional key) — recent local dumping/landfill news & complaints.
+
+**Regional "deep" layers** (same contract, documented as drop-in extensions):
+🇺🇸 EPA ECHO / LMOP landfill DB / Envirofacts · 🇪🇺 EEA E-PRTR waste transfers + Copernicus ·
+🇮🇳 CPCB landfill inventory + Swachhata grievance data + data.gov.in.
+
+### Configure & run with the hackathon stack
+
+```powershell
+# backend
+pip install -r requirements.txt            # includes openai (Nebius client)
+Copy-Item .env.example .env                 # paste NEBIUS_API_KEY + exact base URL/model IDs
+.\.venv\Scripts\Activate.ps1
+uvicorn app.main:app --reload --port 8000   # GET /health shows the live Nemotron provider
+
+# optional: NVIDIA NeMo Agent Toolkit orchestration
+pip install -r requirements-nat.txt
+nat run --config_file nat_config.yml --input "<inspection context json>"
+```
+
+> **Note on NeMo Agent Toolkit:** NVIDIA deprecated it in Oct 2026 (EOL end-2026), so
+> WasteWatch uses it as an **optional** wrapper only — the live demo path calls the same
+> Nemotron models directly via Nebius, identical logic, and runs fully without it.
+
+### What was built during the submission period
+
+The prior build was a deterministic OpenCV change-detection + agent pipeline with an
+*optional* Amazon Bedrock adviser. **For this hackathon** we added the entire
+Nemotron-on-Nebius interpretation layer (`app/nemotron.py`), the global open-data
+enrichment layer (`app/enrich.py`), the NeMo Agent Toolkit integration
+(`app/nat_agent.py`, `nat_config.yml`), the frontend intelligence-brief UI, and the MIT
+license — replacing Bedrock with the required NVIDIA + Nebius stack.
+
+### Feedback on Nebius Token Factory & NVIDIA tooling
+
+- **Token Factory** OpenAI-compatibility made the Bedrock→Nemotron swap a ~1-file change
+  — excellent. The one friction point: the base URL is **region-specific per model**
+  (VL in us-north1, reasoning in us-central1), so a single global base URL isn't obvious
+  from the dashboard; we made it an env var. A unified router URL would help.
+- **Nemotron tiering** (VL / Super / Ultra) maps cleanly onto a cost-aware agent — using
+  Super for routine briefs and escalating only high-severity cases to Ultra kept credits
+  predictable.
+- **NeMo Agent Toolkit** being deprecated *during* the hackathon window created
+  uncertainty; clearer migration guidance to NeMo Fabric/Helix in the quick-start would
+  help new builders choose.
+
+---
+
 ## Inspiration
 
 Every day, satellites capture images of our planet. They observe forests disappearing, land being disturbed, waste sites expanding, and landscapes changing.

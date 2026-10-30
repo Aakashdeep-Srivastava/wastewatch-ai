@@ -16,6 +16,8 @@ import time
 import uuid
 
 from . import vision
+from . import nemotron
+from . import enrich
 
 CLOUD_MAX = 0.20          # AOI cloud fraction above this -> alternate date
 INLIER_MIN = 25           # below this (or implausible transform) -> ECC
@@ -155,16 +157,92 @@ def semantic_adviser(crop_path):
         return None
 
 
+def _reason_label(brief):
+    """Compress a Nemotron brief into a short timeline decision string."""
+    if not brief:
+        return "no reasoning model configured"
+    return (f"{brief.get('likely_cause', '?')} / {brief.get('legality', '?')} / "
+            f"severity {brief.get('severity', '?')} "
+            f"(conf {brief.get('confidence', '?')})")
+
+
+def interpret(verdict, trace, artifacts, aoi=None, location=None, dates=None,
+              emit=None):
+    """ADVISORY interpretation layer (NVIDIA Nemotron on Nebius + open data).
+
+    Runs only for human-reviewable states. It explains the evidence; it never
+    changes the verdict status. Attaches, when available:
+      verdict["adviser"]    Nemotron 3.5 Super VL look at the disputed crop
+      verdict["enrichment"] nearest permitted facility / air quality / news
+      verdict["brief"]      Nemotron reasoning fusion -> regulator-ready brief
+    """
+    if verdict["status"] not in ("PENDING_REVIEW", "NEEDS_REVIEW"):
+        return
+
+    # 1) VISION: Nemotron VL names what the ambiguous crop looks like.
+    if nemotron.available() and artifacts.get("roi"):
+        note = nemotron.vlm_classify(artifacts["roi"])
+        if note:
+            verdict["adviser"] = note
+            _step(trace, "nemotron_vl", note,
+                  f"visual read: {note.get('visual_category')} "
+                  f"(advisory, non-authoritative)", emit)
+
+    # 2) ENRICH: ask the open environmental record what is known at this AOI.
+    ctx_env = None
+    if aoi:
+        ctx_env = enrich.gather(aoi, location)
+        if ctx_env:
+            verdict["enrichment"] = ctx_env
+            fac = (ctx_env.get("nearest_waste_facility") or {})
+            _step(trace, "enrich_context",
+                  {"nearest_facility_m": fac.get("distance_m"),
+                   "air_quality": (ctx_env.get("air_quality") or {}).get("pm2_5"),
+                   "news": bool(ctx_env.get("news"))},
+                  "global environmental context gathered (OSM / air quality / news)",
+                  emit)
+
+    # 3) REASON: Nemotron fuses CV metrics + context into a defensible brief.
+    if nemotron.available():
+        context = {
+            "location": location, "dates": dates,
+            "candidate_type": verdict.get("candidate_type"),
+            "change_score": verdict.get("change_score"),
+            "disturbed_surface": verdict.get("disturbed_surface"),
+            "num_regions": len(verdict.get("blobs", [])),
+            "vlm": verdict.get("adviser"),
+            "enrichment": ctx_env,
+        }
+        deep = verdict.get("change_score", 0) >= SCORE_HIGH
+        brief = nemotron.intelligence_brief(context, deep=deep)
+        if brief:
+            verdict["brief"] = brief
+            _step(trace, "nemotron_reason", {"model": brief.get("model"),
+                  "likely_cause": brief.get("likely_cause"),
+                  "legality": brief.get("legality"),
+                  "severity": brief.get("severity")},
+                  _reason_label(brief), emit)
+
+
 def inspect(before_path, after_path, alt_after_paths=None, out_dir="out",
-            use_adviser=False, emit=None):
-    """Authoritative deterministic inspection, with an optional VLM adviser note.
+            use_adviser=False, emit=None, aoi=None, location=None, dates=None):
+    """Authoritative deterministic inspection + advisory Nemotron interpretation.
 
     emit: optional callback(step_dict) invoked as each perceive->decide->act step
     completes, so a caller can stream the agent's reasoning live (SSE/AG-UI-style).
+    aoi/location/dates: context for the Nemotron + open-data interpretation layer.
     """
     verdict, trace, artifacts = run_inspection(before_path, after_path,
                                                alt_after_paths, out_dir, emit=emit)
-    if use_adviser and verdict["status"] in ("PENDING_REVIEW", "NEEDS_REVIEW") \
+
+    # Prefer the Nemotron-on-Nebius interpretation layer (hackathon-required AI).
+    interpret(verdict, trace, artifacts, aoi=aoi, location=location,
+              dates=dates, emit=emit)
+
+    # Legacy Bedrock adviser remains available but is off unless explicitly
+    # enabled AND Nemotron produced nothing (kept for backward compatibility).
+    if use_adviser and "adviser" not in verdict \
+            and verdict["status"] in ("PENDING_REVIEW", "NEEDS_REVIEW") \
             and artifacts.get("roi") and os.getenv("ORBIT_ADVISER") == "on":
         note = semantic_adviser(artifacts["roi"])
         if note:

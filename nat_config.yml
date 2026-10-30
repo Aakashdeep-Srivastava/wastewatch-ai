@@ -1,0 +1,28 @@
+# NVIDIA NeMo Agent Toolkit workflow for WasteWatch AI.
+# Drives the Nemotron intelligence-brief step through NVIDIA's open-source
+# agentic framework, pointed at NVIDIA Nemotron served on Nebius Token Factory
+# (OpenAI-compatible endpoint). Optional orchestration wrapper — see
+# app/nat_agent.py. Run with:  nat run --config_file nat_config.yml --input '...'
+#
+# Requires:  pip install -r requirements-nat.txt   and   NEBIUS_API_KEY set.
+
+llms:
+  nemotron_reasoning:
+    _type: openai
+    base_url: ${NEBIUS_BASE_URL:-https://api.studio.nebius.com/v1/}
+    api_key: ${NEBIUS_API_KEY}
+    model_name: ${NEMOTRON_REASON_MODEL:-nvidia/nemotron-3-super-120b-a12b}
+    temperature: 0.1
+    max_tokens: 500
+
+functions:
+  wastewatch_brief:
+    _type: wastewatch_brief
+    deep: false
+
+workflow:
+  _type: react_agent
+  llm_name: nemotron_reasoning
+  tool_names:
+    - wastewatch_brief
+  verbose: true

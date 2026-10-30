@@ -1,0 +1,11 @@
+# Optional: NVIDIA NeMo Agent Toolkit — the NVIDIA open-source agentic framework.
+# Used to orchestrate the Nemotron intelligence-brief step as a registered NAT
+# function/workflow (see app/nat_agent.py + nat_config.yml).
+#
+# NOTE: NeMo Agent Toolkit was deprecated by NVIDIA in October 2026 (EOL end of
+# 2026). WasteWatch uses it as an OPTIONAL orchestration wrapper only — the live
+# demo path calls the same Nemotron models directly via the OpenAI-compatible
+# Nebius endpoint (app/nemotron.py), so the app runs fully without this install.
+#
+#   pip install -r requirements-nat.txt
+nvidia-nat>=1.6

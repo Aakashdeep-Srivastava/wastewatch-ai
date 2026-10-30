@@ -98,6 +98,99 @@ export default function ResultsView({ result, onReviewed, onFocusRegion }: Props
         {result.display && <p className="mt-2 text-xs text-slate-500">{result.display}</p>}
       </div>
 
+      {/* Nemotron intelligence brief — the AI interpretation layer */}
+      {result.brief && (
+        <div className="rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-3">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-[#76b900] px-2 py-0.5 text-[10px] font-bold text-white">
+              <i className="inline-block h-1.5 w-1.5 rounded-full bg-white" />
+              NVIDIA Nemotron · Nebius Token Factory
+            </span>
+            {result.brief.confidence != null && (
+              <span className="font-mono text-[10px] text-slate-500">
+                confidence {Number(result.brief.confidence).toFixed(2)}
+              </span>
+            )}
+          </div>
+          {result.brief.headline && (
+            <p className="text-sm font-semibold text-slate-800">{result.brief.headline}</p>
+          )}
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {result.brief.likely_cause && (
+              <span className="rounded-md bg-slate-900 px-2 py-0.5 text-[10px] font-semibold text-white">
+                {result.brief.likely_cause.replace(/_/g, " ")}
+              </span>
+            )}
+            {result.brief.legality && (
+              <span className={`rounded-md px-2 py-0.5 text-[10px] font-semibold ${
+                result.brief.legality === "likely_unpermitted"
+                  ? "bg-rose-100 text-rose-700"
+                  : result.brief.legality === "likely_permitted"
+                  ? "bg-emerald-100 text-emerald-700"
+                  : "bg-slate-100 text-slate-600"}`}>
+                {result.brief.legality.replace(/_/g, " ")}
+              </span>
+            )}
+            {result.brief.severity && (
+              <span className="rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+                severity: {result.brief.severity}
+              </span>
+            )}
+          </div>
+          {result.brief.rationale && (
+            <p className="mt-2 text-xs leading-relaxed text-slate-600">{result.brief.rationale}</p>
+          )}
+          {result.brief.recommended_action && (
+            <p className="mt-1.5 text-xs text-slate-700">
+              <b>Recommended:</b> {result.brief.recommended_action}
+            </p>
+          )}
+          <p className="mt-2 text-[10px] text-slate-400">
+            Advisory only — the deterministic policy sets the verdict; a human confirms.
+            {result.brief.model ? ` · ${result.brief.model}` : ""}
+          </p>
+        </div>
+      )}
+
+      {/* Global environmental context (open data the model reasoned over) */}
+      {result.enrichment && (
+        <div className="rounded-lg border border-slate-200 p-3">
+          <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+            Global environmental context
+          </h3>
+          <div className="flex flex-wrap gap-2 text-[11px]">
+            {result.enrichment.nearest_waste_facility && (
+              <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">
+                {result.enrichment.nearest_waste_facility.distance_m != null
+                  ? `Nearest permitted site: ${result.enrichment.nearest_waste_facility.distance_m} m (${result.enrichment.nearest_waste_facility.kind ?? "waste"})`
+                  : (result.enrichment.nearest_waste_facility.note ?? "No permitted site nearby")}
+              </span>
+            )}
+            {result.enrichment.air_quality?.pm2_5 != null && (
+              <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">
+                PM2.5 {result.enrichment.air_quality.pm2_5} {result.enrichment.air_quality.units}
+              </span>
+            )}
+            {result.enrichment.news?.results && result.enrichment.news.results.length > 0 && (
+              <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">
+                {result.enrichment.news.results.length} local report(s)
+              </span>
+            )}
+          </div>
+          {result.enrichment.news?.results && result.enrichment.news.results.length > 0 && (
+            <ul className="mt-2 space-y-0.5">
+              {result.enrichment.news.results.slice(0, 3).map((r, i) => (
+                <li key={i} className="truncate text-[11px]">
+                  <a href={r.url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">
+                    {r.title}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+
       {/* viewer */}
       <div>
         <div className="mb-2 flex flex-wrap gap-1.5">

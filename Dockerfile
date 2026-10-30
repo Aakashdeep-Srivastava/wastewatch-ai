@@ -1,8 +1,9 @@
-# WasteWatch AI container image.
-# OpenCV 5 (headless) + FastAPI served by uvicorn.
+# WasteWatch AI container image (backend: FastAPI + OpenCV 5 + Nemotron client).
+# CPU-only — Nemotron inference runs remotely on Nebius Token Factory, so this
+# image needs no GPU. Deploy on a Nebius AI Cloud VM (Docker) or any container host.
 FROM python:3.12-slim
 
-# Runtime libs needed by opencv-python-headless on slim images.
+# Runtime libs needed by opencv-python-headless (and rasterio) on slim images.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends libglib2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
@@ -16,7 +17,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Application code.
 COPY app ./app
 
-# App Runner / container port. uvicorn reads PORT (default 8000).
+# Writable runtime dirs (StaticFiles mount + JSON alert store).
+RUN mkdir -p out data
+
+# Container port. uvicorn reads PORT (default 8000). NVIDIA/Nebius credentials and
+# model IDs are injected at runtime (NEBIUS_API_KEY, NEBIUS_BASE_URL, NEMOTRON_*).
 ENV PORT=8000 \
     ORBIT_AGENT=rule \
     PYTHONUNBUFFERED=1
