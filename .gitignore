@@ -5,3 +5,7 @@ out/
 data/
 eval_report.json
 .DS_Store
+.env
+.env.*
+!.env.example
+.vercel/

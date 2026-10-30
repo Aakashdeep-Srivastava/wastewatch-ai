@@ -1,6 +1,6 @@
 # WasteWatch AI — Product Requirements Document
 
-**Status:** As-built + forward-looking · **Last updated:** 2026-10-31
+**Status:** As-built + forward-looking · **Last updated:** 2026-10-31 (frontend deployed)
 **Owner:** Aakashdeep Srivastava · **License:** MIT
 
 > This PRD is the prose source of truth for *what* WasteWatch AI is, *why* each part
@@ -93,7 +93,8 @@ Two services:
   (keyless OSM place search), `/scenes` (real Sentinel-2 L2A via Element84 Earth Search / STAC),
   `/inspect/scene/stream` (clip chosen scenes to AOI + stream the agent live over SSE),
   `/inspect/stream` (manual upload), `/alerts` (dashboard list), `/approve/{id}` (token-guarded
-  human review).
+  human review), `/limits` (live rate-limit + AI-budget state), `/admin/limits` (token-guarded
+  runtime tuning). Cost-aware rate limiting (`app/ratelimit.py`) guards every paid/expensive path.
 - **Frontend — Next.js 16 / React 19 / TypeScript / Tailwind (`frontend/`)**: the full 8-step
   journey. **State: Zustand** for client/journey state (`lib/store.ts`), **TanStack Query** for
   request/response server state (`lib/queries.ts`). Proxies `/api/*` to the backend (no CORS; SSE
@@ -150,6 +151,27 @@ Regional deep layers documented as drop-in extensions: 🇺🇸 EPA ECHO / LMOP 
 
 Every inspection emits a structured **trace** (tool, metric, decision, timestamp) streamed live
 over SSE and preserved with the case — the foundation for debugging, review, and evaluation.
+
+### 7.4 Cost-aware, dynamic rate limiting (`app/ratelimit.py`)
+
+The backend runs on a small Nebius VM and its expensive path (paid Nemotron inference + Sentinel-2
+egress) is the real cost driver, so rate limiting is **by cost and risk**:
+
+- **Cost-tiered per-client token buckets:** `expensive` (inspections, default 20/hr), `moderate`
+  (external-API lookups — scenes/geocode, 30/min), `cheap` (local reads, 240/min). Client keyed by
+  the real caller IP (first `x-forwarded-for` hop behind the Vercel proxy). Over-limit → `429` with
+  `Retry-After`.
+- **AI spend ceiling (sustainability lever):** a rolling 24 h cap on paid Nemotron calls
+  (`AI_BUDGET_CALLS_PER_DAY`, default 500). When exhausted, inspections **keep running but skip the
+  Nemotron brief → CV-only** — the same "no AI → no brief, never mocked" degrade as an unset key. A
+  traffic spike or abuse can never run up an unbounded Token Factory bill.
+- **"Highly dynamic":** effective limits are recomputed per request as
+  `base(tier) × adaptive_factor`, where the factor auto-tightens (×0.5, ×0.25) as the AI budget
+  depletes **and** as live inspection concurrency rises, then recovers. Limits/budget are tunable
+  **at runtime** via token-guarded `POST /admin/limits` (no redeploy); `GET /limits` exposes the
+  full live state (effective limits, 24 h spend vs budget, degrade flag).
+- **Config-gated, shipped on:** every knob has an env default (`RL_*`, `AI_BUDGET_*`); set
+  `RL_ENABLED=off` to disable.
 
 ---
 
@@ -211,7 +233,8 @@ clarifications shaped the decision:
   upload; every external dependency has a degradation path.
 - **Privacy & security:** reviewer-token-guarded approvals today; per-user identity, rate limiting,
   and production auth are planned. Secrets via env / platform secret-refs, never committed.
-- **Cost-awareness:** Nemotron tiering — routine briefs on Super, only high-severity on Ultra.
+- **Cost-awareness:** Nemotron tiering — routine briefs on Super, only high-severity on Ultra; plus
+  cost-tiered rate limiting and a 24 h AI spend ceiling that degrades to CV-only (see §7.4).
 - **Attribution & etiquette:** each external source carries its license and required attribution;
   cache, don't hammer.
 - **Accessibility:** status conveyed by colour + icon + label, not colour alone.
@@ -230,11 +253,18 @@ clarifications shaped the decision:
   human review, never confirmed violations.
 - **Auth is a shared dev reviewer token** — no per-user identity / rate limiting / production auth
   yet. Set `REVIEWER_TOKEN` in production.
-- **Deployment not yet wired** (two services). Local run is fully working; cloud wiring deferred —
-  target is **Nebius AI Cloud** (CLI connected: tenant `tenant-e00rkz9p7knrct6z9w`, project
-  `default-project-eu-west2`).
+- **Deployment — partial.** Frontend is **live on Vercel**: https://wastewatch-ai-psi.vercel.app
+  (public, UI/globe loads). The **backend is not yet hosted**: target is a Nebius AI Cloud VM, but
+  `compute.instance.create` is PermissionDenied because the tenant's compute is not enabled
+  (project quota granted; tenant pool root-controlled). Until the backend is online and
+  `FASTAPI_ORIGIN` points at it, the deployed UI loads but data/AI features (search, scenes,
+  inspect) return errors. Token Factory key is validated and ready; code is on `main`; the VM
+  create is staged — so once compute is enabled this is a ~5-minute finish.
 - **Agentic framework is documented, not yet migrated** — the LangGraph/LangSmith decision above is
   a planned refactor; the shipping agent is still the hand-rolled state machine.
+- **Rate-limit + AI-budget state is per-process** (exact on one VM). With multiple replicas each gets
+  its own share; a shared Redis store (`storage_uri`) would make it global. Documented in
+  `app/ratelimit.py`, not hidden.
 
 ## 11. Roadmap
 
